@@ -47,7 +47,7 @@ readonly BBR_SYSCTL="/etc/sysctl.d/99-${APP_NAME}-bbr.conf"
 # ── Самообновление ──────────────────────────────────────────────────────────
 # Впиши сюда свой репозиторий (ник/имя). Если оставить CHANGE_ME — скрипт спросит его при первом обновлении
 # и сохранит в /etc/vpsmenu.conf. Публичный репозиторий, файл vpsmenu.sh в корне.
-readonly DEFAULT_REPO="CHANGE_ME/vpsmenu"
+readonly DEFAULT_REPO="skrskr7799-design/vpsmenu"
 readonly DEFAULT_BRANCH="main"
 RAW_BASE="${VPSMENU_RAW_BASE:-https://raw.githubusercontent.com}"
 
