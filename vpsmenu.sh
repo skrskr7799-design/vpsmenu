@@ -8,7 +8,8 @@
 #
 #  Модули: sudo-пользователь · SSH (root, ключи, порт) · UFW · nftables · Fail2ban · Docker ·
 #          Remnanode (xlogs, бэкапы) · WARP Native · оптимизация (BBR, swap, NTP, автообновления) ·
-#          мастер быстрой настройки · самообновление из GitHub
+#          мастер быстрой настройки · профили серверов · watchdog для Remnanode ·
+#          диагностика сети и Speedtest · самообновление из GitHub
 #  Лог действий:   /var/log/vpsmenu.log
 #
 #  Намеренно без `set -e`: в интерактивном меню каждая ошибка проверяется явно,
@@ -18,7 +19,7 @@ set -uo pipefail
 
 # ══════════════════════════ Константы ══════════════════════════
 readonly APP_NAME="vpsmenu"
-readonly APP_VERSION="2.0.0"
+readonly APP_VERSION="2.1.0"
 readonly INSTALL_PATH="/usr/local/bin/${APP_NAME}"
 readonly LOG_FILE="/var/log/${APP_NAME}.log"
 
@@ -43,6 +44,11 @@ readonly REMNA_CONTAINER="remnanode"
 readonly SWAPFILE="/swapfile"
 readonly SWAP_SYSCTL="/etc/sysctl.d/99-${APP_NAME}-swap.conf"
 readonly BBR_SYSCTL="/etc/sysctl.d/99-${APP_NAME}-bbr.conf"
+readonly REMNA_STATE="${STATE_DIR}/remnanode.state"
+readonly REMNA_STOP_FLAG="${STATE_DIR}/remnanode.stopped"
+readonly WD_SERVICE="/etc/systemd/system/${APP_NAME}-watchdog.service"
+readonly WD_TIMER="/etc/systemd/system/${APP_NAME}-watchdog.timer"
+readonly PROFILE_DIR="/etc/${APP_NAME}/profiles"
 
 # ── Самообновление ──────────────────────────────────────────────────────────
 # Впиши сюда свой репозиторий (ник/имя). Если оставить CHANGE_ME — скрипт спросит его при первом обновлении
@@ -68,6 +74,7 @@ ${APP_NAME} ${APP_VERSION} — меню настройки VPS (Ubuntu)
   ${APP_NAME}              запустить меню
   ${APP_NAME} --install    установить скрипт в ${INSTALL_PATH}
   ${APP_NAME} --update     обновить скрипт из GitHub
+  ${APP_NAME} --watchdog   разовая проверка Remnanode (вызывается таймером systemd)
   ${APP_NAME} --version    показать версию
   ${APP_NAME} --help       эта справка
 EOF
@@ -87,7 +94,7 @@ if [[ $EUID -ne 0 ]]; then
   exit 1
 fi
 
-if [[ ${1:-} != --install && ( ! -t 0 || ! -t 1 ) ]]; then
+if [[ ${1:-} != --install && ${1:-} != --watchdog && ( ! -t 0 || ! -t 1 ) ]]; then
   echo "Скрипту нужен интерактивный терминал." >&2
   exit 1
 fi
@@ -130,10 +137,11 @@ header() {
 
 menu_item() { printf '  %s%2s%s  %s\n' "${C_BOLD}${C_CYAN}" "$1" "$C_RESET" "$2"; }
 
-badge() { # badge ok|warn|off "текст"
+badge() { # badge ok|warn|bad|off "текст"
   case $1 in
     ok)   printf '%s●%s %s' "$C_GREEN" "$C_RESET" "$2" ;;
     warn) printf '%s●%s %s' "$C_YELLOW" "$C_RESET" "$2" ;;
+    bad)  printf '%s●%s %s' "$C_RED" "$C_RESET" "$2" ;;
     *)    printf '%s○ %s%s' "$C_DIM" "$2" "$C_RESET" ;;
   esac
 }
@@ -284,73 +292,10 @@ mod_user() {
   header "1. Пользователь с правами sudo"
   ask_re "Имя нового пользователя" "" "$USERNAME_RE" \
     "Допустимо: a-z, 0-9, _ и -, начинать с буквы, до 32 символов."
-  local user=$ASK_RESULT
-
-  if [[ $user == root ]]; then
-    err "root — не новый пользователь."; pause; return 1
-  fi
-
-  step "Создание пользователя"
-  if id "$user" >/dev/null 2>&1; then
-    warn "Пользователь '$user' уже существует — создание пропущено."
-  else
-    info "Сейчас adduser попросит задать пароль и данные (данные можно пропускать Enter)."
-    if ! adduser "$user"; then
-      err "adduser завершился с ошибкой."; pause; return 1
-    fi
-    if ! id "$user" >/dev/null 2>&1; then
-      err "Пользователь не появился в системе."; pause; return 1
-    fi
-    ok "Пользователь '$user' создан."
-  fi
-
-  local pst
-  pst="$(passwd -S "$user" 2>/dev/null | awk '{print $2}')"
-  if [[ $pst != P ]]; then
-    warn "У '$user' не задан пароль (статус: ${pst:-?}); для sudo он обычно нужен."
-    if confirm "Задать пароль сейчас?" Y; then passwd "$user"; fi
-  fi
-
-  step "Права sudo"
-  if user_in_sudo "$user"; then
-    ok "'$user' уже в группе sudo."
-  elif usermod -aG sudo "$user"; then
-    ok "'$user' добавлен в группу sudo."
-  else
-    err "Не удалось добавить в группу sudo."; pause; return 1
-  fi
-
-  step "Проверка"
-  id "$user"
-  echo "  groups: $(groups "$user")"
-  if user_in_sudo "$user"; then
-    ok "'$user' состоит в группе sudo."
-  else
-    err "'$user' НЕ в группе sudo."
-  fi
-  if sudo -l -U "$user" 2>/dev/null | grep -q 'may run the following'; then
-    ok "sudoers подтверждает права sudo."
-  else
-    warn "sudoers не показывает прав sudo для '$user' — проверь /etc/sudoers."
-  fi
-
-  local home grp
-  home="$(getent passwd "$user" | cut -d: -f6)"
-  grp="$(id -gn "$user")"
-  if [[ -s /root/.ssh/authorized_keys && ! -s "$home/.ssh/authorized_keys" ]]; then
-    echo
-    info "У root есть SSH-ключи, а у '$user' их нет."
-    hint "Если на сервере вход только по ключам, без копирования ты не сможешь зайти новым пользователем."
-    if confirm "Скопировать ключи root пользователю '$user'?" Y; then
-      install -d -m 700 -o "$user" -g "$grp" "$home/.ssh" &&
-      install -m 600 -o "$user" -g "$grp" /root/.ssh/authorized_keys "$home/.ssh/authorized_keys" &&
-        ok "SSH-ключи скопированы." || err "Не удалось скопировать ключи."
-    fi
-  fi
-
+  if ! user_setup "$ASK_RESULT" ask; then pause; return 1; fi
   echo
   warn "Дальше НЕ закрывай эту сессию. Открой второе окно терминала и проверь:"
-  hint "ssh $user@<IP-сервера>   — вход проходит"
+  hint "ssh $ASK_RESULT@<IP-сервера>   — вход проходит"
   hint "sudo -v                  — sudo работает"
   hint "Только после этого переходи к пункту 2 (запрет входа root)."
   pause
@@ -550,14 +495,14 @@ mod_ufw_setup() {
   fi
 
   step "Первичная настройка"
-  local detected ports p
+  local detected ports p bad
   detected="$(detect_ssh_ports)"
   info "Порт(ы) SSH на этом сервере: $detected"
   warn "Порт SSH обязательно должен быть открыт, иначе после включения UFW ты потеряешь доступ."
   while true; do
     ask "Какие порты SSH открыть (через пробел)" "$detected"
     ports="$ASK_RESULT"
-    local bad=0
+    bad=0
     for p in $ports; do valid_port "$p" || bad=1; done
     if [[ -n $ports ]] && (( ! bad )); then break; fi
     err "Укажи номера портов от 1 до 65535 через пробел."
@@ -566,21 +511,7 @@ mod_ufw_setup() {
   echo
   info "Будет выполнено: default deny incoming / allow outgoing; allow ${ports// //tcp, }/tcp; enable; logging low"
   confirm "Включить UFW?" Y || { info "Отменено."; pause; return 0; }
-
-  ufw default deny incoming >/dev/null && ufw default allow outgoing >/dev/null &&
-    ok "Политики по умолчанию: входящие закрыты, исходящие открыты." || err "Не удалось задать политики."
-  for p in $ports; do
-    if ufw allow "${p}/tcp" >/dev/null; then ok "Открыт порт ${p}/tcp"; else err "Не удалось открыть ${p}/tcp"; fi
-  done
-
-  if ufw --force enable >/dev/null; then ok "UFW включён."; else err "Не удалось включить UFW."; pause; return 1; fi
-  ufw logging low >/dev/null && ok "Логирование: low"
-
-  if ufw_is_active; then ok "Проверка: UFW активен."; else err "UFW не активен!"; fi
-  for p in $ports; do
-    if ufw_c status | grep -qE "^${p}/tcp[[:space:]]+ALLOW"; then ok "Правило для ${p}/tcp на месте."; else warn "Правило для ${p}/tcp не найдено в статусе."; fi
-  done
-  echo; ufw status verbose
+  ufw_apply "$ports" "" || { pause; return 1; }
   echo
   hint "Нужные порты открывай через меню: UFW → «Открыть порт» (например, порт ноды Remnawave для IP панели)."
   pause
@@ -815,61 +746,12 @@ f2b_configure() {
   ask "ignoreip" "${cur:-127.0.0.1/8 ::1}"
   ignoreip=$ASK_RESULT
 
-  local bak=""
-  if [[ -f $F2B_JAIL ]]; then
-    bak="${F2B_JAIL}.bak.$(date +%Y%m%d-%H%M%S)"
-    cp -a "$F2B_JAIL" "$bak" && ok "Резервная копия: $bak"
-  fi
-
-  cat >"$F2B_JAIL" <<EOF
-# Создано ${APP_NAME} $(date '+%F %T')
-# Основной файл jail.conf не трогаем — свои настройки держим в jail.d.
-[sshd]
-enabled  = true
-port     = ${port}
-backend  = systemd
-maxretry = ${maxretry}
-findtime = ${findtime}
-bantime  = ${bantime}
-ignoreip = ${ignoreip}
-EOF
-  ok "Записан $F2B_JAIL"
-
-  local out
-  if ! out="$(fail2ban-client -t 2>&1)"; then
-    err "Конфигурация не прошла проверку:"; echo "$out"
-    if [[ -n $bak ]]; then cp -a "$bak" "$F2B_JAIL" && warn "Восстановлена предыдущая версия."; else rm -f "$F2B_JAIL"; warn "Новый файл удалён."; fi
-    return 1
-  fi
-  ok "Проверка конфигурации (fail2ban-client -t) пройдена."
-
-  if ! systemctl restart fail2ban; then
-    err "Не удалось перезапустить fail2ban. Смотри: journalctl -u fail2ban"
-    return 1
-  fi
-  for _ in 1 2 3 4 5 6 7 8 9 10; do
-    fail2ban-client ping >/dev/null 2>&1 && break
-    sleep 1
-  done
-  if fail2ban-client ping >/dev/null 2>&1; then ok "fail2ban перезапущен и отвечает."; else err "fail2ban не отвечает после перезапуска."; return 1; fi
-
-  echo; fail2ban-client status sshd
+  f2b_write_jail "$port" "$maxretry" "$findtime" "$bantime" "$ignoreip"
 }
 
 mod_f2b_setup() {
   header "5. Fail2ban: установка и настройка"
-  if is_pkg_installed fail2ban; then
-    ok "fail2ban уже установлен: $(fail2ban-client --version 2>/dev/null | head -n 1)"
-  else
-    apt_install fail2ban python3-systemd || { pause; return 1; }
-    ok "fail2ban установлен."
-  fi
-
-  if ! service_enabled fail2ban; then systemctl enable fail2ban >/dev/null 2>&1 && ok "Автозапуск включён."; fi
-  if ! service_active fail2ban; then
-    systemctl start fail2ban && ok "fail2ban запущен." || { err "Не удалось запустить fail2ban."; pause; return 1; }
-    sleep 2
-  fi
+  f2b_install_apply || { pause; return 1; }
 
   if [[ -f $F2B_JAIL ]]; then
     ok "Найден твой конфиг: $F2B_JAIL"
@@ -1004,35 +886,7 @@ mod_docker() {
 
   info "Docker не найден. Установка — официальным скриптом $DOCKER_URL."
   confirm "Установить Docker?" Y || { info "Отменено."; pause; return 0; }
-
-  ensure_curl || { pause; return 1; }
-
-  local tmp rc
-  tmp="$(mktemp)"
-  step "Скачиваю установочный скрипт"
-  if ! download "$DOCKER_URL" "$tmp"; then
-    err "Не удалось скачать $DOCKER_URL (проверь интернет, DNS, доступность сайта)."
-    rm -f "$tmp"; pause; return 1
-  fi
-  ok "Скачано."
-
-  step "Устанавливаю Docker (это займёт пару минут)"
-  sh "$tmp"; rc=$?
-  rm -f "$tmp"
-  if (( rc != 0 )); then
-    err "Установка завершилась с ошибкой (код $rc). Смотри вывод выше."
-    pause; return 1
-  fi
-
-  systemctl enable --now docker >/dev/null 2>&1
-  if cmd_exists docker && service_active docker; then
-    ok "Docker установлен: $(docker --version)"
-    docker compose version >/dev/null 2>&1 && ok "Compose: $(docker compose version)"
-  else
-    err "Docker установлен, но служба не запущена. Смотри: journalctl -u docker"
-    pause; return 1
-  fi
-
+  if ! docker_install_apply; then pause; return 1; fi
   if confirm "Проверить работу тестовым контейнером hello-world?" Y; then
     if docker run --rm hello-world >/dev/null 2>&1; then ok "Тестовый контейнер отработал."; else err "Тестовый контейнер не запустился."; fi
   fi
@@ -1059,7 +913,10 @@ remna_require_compose() {
   fi
 }
 
-rcompose() { (cd "$REMNA_DIR" && docker compose "$@"); }
+rcompose() {
+  if [[ ${1:-} == up ]]; then rm -f "$REMNA_STOP_FLAG"; fi
+  (cd "$REMNA_DIR" && docker compose "$@")
+}
 
 remna_edit_compose() {
   cmd_exists nano || apt_install nano || return 1
@@ -1138,7 +995,14 @@ mod_remna_stop() {
   remna_require_compose || { pause; return 1; }
   warn "Контейнер будет остановлен и удалён (docker compose down). Конфиг и тома сохранятся."
   confirm "Остановить Remnanode?" N || { info "Отменено."; pause; return 0; }
-  if rcompose down; then ok "Остановлено."; else err "Не удалось остановить."; fi
+  if rcompose down; then
+    ok "Остановлено."
+    install -d -m 0755 "$STATE_DIR" 2>/dev/null
+    touch "$REMNA_STOP_FLAG"
+    hint "Watchdog не будет перезапускать ноду, пока ты сам её не запустишь."
+  else
+    err "Не удалось остановить."
+  fi
   pause
 }
 
@@ -1217,6 +1081,7 @@ menu_remna() {
     menu_item 11 "Зайти в контейнер (shell)"
     menu_item 12 "Бэкап конфигов"
     menu_item 13 "Восстановить из бэкапа"
+    menu_item 14 "Watchdog (контроль и автоперезапуск)"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
@@ -1233,6 +1098,7 @@ menu_remna() {
       11) mod_remna_shell ;;
       12) mod_remna_backup ;;
       13) mod_remna_restore ;;
+      14) menu_watchdog ;;
       0)  return 0 ;;
       *)  warn "Нет такого пункта."; sleep 1 ;;
     esac
@@ -1313,15 +1179,9 @@ status_panel() {
   elif service_active docker; then printf '  %-10s %s\n' "Docker" "$(badge ok 'работает')"
   else printf '  %-10s %s\n' "Docker" "$(badge warn 'установлен, не запущен')"; fi
 
-  if [[ -s $REMNA_COMPOSE ]] && cmd_exists docker && service_active docker; then
-    s="$(rcompose ps --status running -q 2>/dev/null | wc -l)"
-    if (( s > 0 )); then printf '  %-10s %s\n' "Remnanode" "$(badge ok "запущен (контейнеров: $s)")"
-    else printf '  %-10s %s\n' "Remnanode" "$(badge warn 'настроен, не запущен')"; fi
-  elif [[ -s $REMNA_COMPOSE ]]; then
-    printf '  %-10s %s\n' "Remnanode" "$(badge warn 'настроен, Docker не работает')"
-  else
-    printf '  %-10s %s\n' "Remnanode" "$(badge off 'не настроен')"
-  fi
+  local rs
+  rs="$(remna_panel_state)"
+  printf '  %-10s %s\n' "Remnanode" "$(badge "${rs%%|*}" "${rs#*|}")"
 
   if warp_detected; then printf '  %-10s %s\n' "WARP" "$(badge ok 'обнаружен')"
   else printf '  %-10s %s\n' "WARP" "$(badge off 'не обнаружен')"; fi
@@ -1583,6 +1443,11 @@ update_apply() { # update_apply СКАЧАННЫЙ_ФАЙЛ — ставит н�
     if cp -a "$src" "$bak"; then ok "Копия текущей версии: $bak"; fi
     backup_files "${APP_NAME}-v*.sh" | tail -n +6 | xargs -r rm -f
   fi
+  # запоминаем репозиторий в конфиге: новая версия не потеряет источник обновлений
+  if update_repo_ok && [[ -z "$(conf_get GITHUB_REPO)" ]]; then
+    conf_set GITHUB_REPO "$(update_repo)"
+    conf_set GITHUB_BRANCH "$(update_branch)"
+  fi
   if ! install -m 0755 -o root -g root "$1" "$INSTALL_PATH"; then
     err "Не удалось записать $INSTALL_PATH."
     return 1
@@ -1789,33 +1654,10 @@ mod_ssh_addkey() {
     err "Пользователя '$user' нет (создай его в пункте 1)."; pause; return 1
   fi
   ask "Вставь публичный ключ одной строкой (Enter — отмена)"
-  local key=$ASK_RESULT fp
-  if [[ -z $key ]]; then info "Отменено."; pause; return 0; fi
-  if [[ $key == -----* ]]; then
-    err "Это ПРИВАТНЫЙ ключ. Его нельзя никуда вставлять — нужен публичный (файл .pub)."
-    pause; return 1
+  if [[ -z $ASK_RESULT ]]; then info "Отменено."; pause; return 0; fi
+  if ssh_addkey_apply "$user" "$ASK_RESULT"; then
+    hint "Проверь вход по ключу в отдельном окне, прежде чем отключать пароль."
   fi
-  if ! fp="$(pubkey_fingerprint "$key")"; then
-    err "Это не похоже на публичный SSH-ключ (проверка ssh-keygen не прошла)."
-    pause; return 1
-  fi
-  local home grp file
-  home="$(getent passwd "$user" | cut -d: -f6)"
-  grp="$(id -gn "$user")"
-  file="$home/.ssh/authorized_keys"
-  if ! install -d -m 700 -o "$user" -g "$grp" "$home/.ssh"; then
-    err "Не удалось создать $home/.ssh"; pause; return 1
-  fi
-  touch "$file" && chown "$user:$grp" "$file" && chmod 600 "$file"
-  if grep -qxF "$key" "$file"; then
-    warn "Такой ключ у '$user' уже есть."
-  elif printf '%s\n' "$key" >>"$file"; then
-    ok "Ключ добавлен пользователю '$user'."
-  else
-    err "Не удалось записать ключ."; pause; return 1
-  fi
-  info "Отпечаток: $fp"
-  hint "Проверь вход по ключу в отдельном окне, прежде чем отключать пароль."
   pause
 }
 
@@ -2036,51 +1878,11 @@ mod_docker_logrotate() {
   local size=$ASK_RESULT
   ask_re "max-file — сколько файлов хранить" "3" '^[1-9][0-9]*$' "Нужно целое число больше нуля."
   local nfiles=$ASK_RESULT
-
   echo
   warn "Для применения нужен перезапуск Docker (контейнеры с restart: always/unless-stopped поднимутся сами)."
   hint "Настройка действует только на НОВЫЕ контейнеры — после неё пересоздай их (Remnanode → «Перезапустить»)."
   confirm "Применить?" Y || { info "Отменено."; pause; return 0; }
-
-  install -d -m 0755 "$(dirname "$DOCKER_DAEMON_JSON")"
-  local bak=""
-  if [[ -f $DOCKER_DAEMON_JSON ]]; then
-    backup_prepare
-    bak="$BACKUP_DIR/daemon.json.$(date +%Y%m%d-%H%M%S)"
-    cp -a "$DOCKER_DAEMON_JSON" "$bak" && ok "Резервная копия: $bak"
-  fi
-  if ! python3 - "$DOCKER_DAEMON_JSON" "$size" "$nfiles" <<'PY'
-import json, os, sys
-path, size, nfiles = sys.argv[1], sys.argv[2], sys.argv[3]
-data = {}
-if os.path.exists(path) and os.path.getsize(path) > 0:
-    with open(path) as f:
-        data = json.load(f)
-data["log-driver"] = "json-file"
-opts = data.get("log-opts", {})
-opts.update({"max-size": size, "max-file": nfiles})
-data["log-opts"] = opts
-tmp = path + ".tmp"
-with open(tmp, "w") as f:
-    json.dump(data, f, indent=2)
-    f.write("\n")
-os.replace(tmp, path)
-PY
-  then
-    err "Не удалось обновить daemon.json (возможно, в нём некорректный JSON). Файл не изменён."
-    pause; return 1
-  fi
-  ok "daemon.json обновлён."
-
-  if systemctl restart docker; then
-    ok "Docker перезапущен."
-    info "Драйвер логов: $(docker info --format '{{.LoggingDriver}}' 2>/dev/null)"
-  else
-    err "Docker не запустился с новой конфигурацией — возвращаю прежнюю."
-    if [[ -n $bak ]]; then cp -a "$bak" "$DOCKER_DAEMON_JSON"; else rm -f "$DOCKER_DAEMON_JSON"; fi
-    systemctl restart docker
-    pause; return 1
-  fi
+  docker_logrotate_apply "$size" "$nfiles"
   pause
 }
 
@@ -2226,29 +2028,8 @@ mod_sys_update() {
   info "Будет выполнено: apt update → apt upgrade → apt autoremove."
   hint "Твои изменённые конфиги (например sshd_config) при обновлении сохраняются."
   confirm "Продолжить?" Y || { info "Отменено."; pause; return 0; }
-
-  step "apt update"
-  if ! apt_run update -q; then err "apt update завершился с ошибкой."; pause; return 1; fi
-  APT_UPDATED=1
-  step "apt upgrade"
-  if ! apt_run -o Dpkg::Options::=--force-confold upgrade -y -q; then
-    err "apt upgrade завершился с ошибкой."; pause; return 1
-  fi
-  step "apt autoremove"
-  apt_run autoremove -y -q
-  ok "Система обновлена."
-
-  if [[ -f /var/run/reboot-required ]]; then
-    echo
-    warn "Требуется перезагрузка (обновилось ядро или системные библиотеки)."
-    if [[ -f /var/run/reboot-required.pkgs ]]; then sed 's/^/    /' /var/run/reboot-required.pkgs; fi
-    hint "Перезагрузка прервёт SSH-сессию; контейнеры с restart: always поднимутся сами."
-    if confirm "Перезагрузить сервер сейчас?" N; then
-      info "Перезагружаю…"
-      systemctl reboot
-      sleep 5
-    fi
-  fi
+  if ! sys_update_run; then pause; return 1; fi
+  reboot_prompt
   pause
 }
 
@@ -2256,46 +2037,16 @@ mod_timezone_ntp() {
   header "Часовой пояс и NTP"
   timedatectl 2>/dev/null | sed 's/^/  /'
   echo
-  local cur tz tzs
+  local cur
   cur="$(timedatectl show -p Timezone --value 2>/dev/null)"
   ask "Часовой пояс (например Europe/Moscow или UTC)" "${cur:-UTC}"
-  tz=$ASK_RESULT
-  tzs="$(timedatectl list-timezones 2>/dev/null)"
-  if ! grep -qxF "$tz" <<<"$tzs"; then
-    err "Неизвестный часовой пояс: $tz (полный список: timedatectl list-timezones)"; pause; return 1
-  fi
-  if timedatectl set-timezone "$tz"; then ok "Часовой пояс: $tz"; else err "Не удалось задать часовой пояс."; fi
-
-  step "Синхронизация времени (NTP)"
-  if is_pkg_installed chrony; then
-    info "Используется chrony — синхронизация идёт через него."
-    service_active chrony || systemctl enable --now chrony >/dev/null 2>&1
-  elif timedatectl set-ntp true 2>/dev/null; then
-    ok "NTP включён."
-  else
-    warn "timedatectl не смог включить NTP — ставлю systemd-timesyncd."
-    if apt_install systemd-timesyncd && systemctl enable --now systemd-timesyncd >/dev/null 2>&1 && timedatectl set-ntp true; then
-      ok "systemd-timesyncd установлен, NTP включён."
-    else
-      err "Не удалось настроить NTP."
-    fi
-  fi
-  sleep 2
-  if [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]]; then
-    ok "Время синхронизировано."
-  else
-    warn "Синхронизация пока не подтверждена (может занять до минуты). Проверь позже: timedatectl"
-  fi
+  tz_ntp_apply "$ASK_RESULT"
   pause
 }
 
 mod_bbr() {
   header "Ускорение сети: BBR"
-  local virt cc qd avail
-  virt="$(systemd-detect-virt 2>/dev/null || true)"
-  if [[ $virt == openvz || $virt == lxc* ]]; then
-    warn "Виртуализация: $virt — менять сетевые параметры ядра в таком контейнере обычно нельзя."
-  fi
+  local cc qd
   cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
   qd="$(sysctl -n net.core.default_qdisc 2>/dev/null)"
   info "Сейчас: congestion_control=${cc:-?}, qdisc=${qd:-?} · ядро $(uname -r)"
@@ -2304,21 +2055,8 @@ mod_bbr() {
     [[ -f $BBR_SYSCTL ]] || hint "Он включён не этим скриптом (файла $BBR_SYSCTL нет)."
     pause; return 0
   fi
-  modprobe tcp_bbr 2>/dev/null
-  avail="$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null)"
-  if [[ " $avail " != *" bbr "* ]]; then
-    err "Ядро не поддерживает BBR (доступно: ${avail:-?})."; pause; return 1
-  fi
   confirm "Включить BBR (+ fq) и сохранить после перезагрузки?" Y || { info "Отменено."; pause; return 0; }
-  printf '# Создано %s\nnet.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n' "$APP_NAME" >"$BBR_SYSCTL"
-  echo tcp_bbr >"/etc/modules-load.d/${APP_NAME}-bbr.conf"
-  sysctl -p "$BBR_SYSCTL" >/dev/null 2>&1
-  if [[ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == bbr ]]; then
-    ok "BBR включён: $(sysctl -n net.ipv4.tcp_congestion_control) / $(sysctl -n net.core.default_qdisc)"
-  else
-    err "Не удалось применить BBR — откатываю."
-    rm -f "$BBR_SYSCTL" "/etc/modules-load.d/${APP_NAME}-bbr.conf"
-  fi
+  bbr_apply
   pause
 }
 
@@ -2358,81 +2096,27 @@ mod_swap() {
     swap_remove
   fi
 
-  local mem_mb def avail_mb size size_mb fstype
+  local mem_mb def size
   mem_mb="$(awk '/^MemTotal:/ {print int($2/1024)}' /proc/meminfo)"
   if (( mem_mb <= 8192 )); then def=2G; else def=1G; fi
   ask_re "Размер swap (например 512M, 1G, 2G)" "$def" '^[1-9][0-9]*[MG]$' "Формат: 512M, 1G, 2G."
   size=$ASK_RESULT
-  if [[ $size == *G ]]; then size_mb=$(( ${size%G} * 1024 )); else size_mb=${size%M}; fi
-
-  avail_mb="$(df -Pm / | awk 'NR==2 {print $4}')"
-  if (( size_mb + 1024 > avail_mb )); then
-    err "Мало места: свободно ${avail_mb}M, нужно ${size_mb}M плюс запас 1G."; pause; return 1
-  fi
-  fstype="$(findmnt -no FSTYPE / 2>/dev/null)"
-  if [[ $fstype == btrfs || $fstype == zfs ]]; then
-    err "На $fstype swap-файл требует особой настройки — скрипт этого не делает."; pause; return 1
-  fi
-  confirm "Создать swap $size в $SWAPFILE?" Y || { info "Отменено."; pause; return 0; }
-
-  step "Создаю $SWAPFILE"
-  if ! fallocate -l "${size_mb}M" "$SWAPFILE" 2>/dev/null; then
-    info "fallocate недоступен — использую dd (дольше)."
-    if ! dd if=/dev/zero of="$SWAPFILE" bs=1M count="$size_mb" status=none; then
-      err "Не удалось создать файл."; rm -f "$SWAPFILE"; pause; return 1
-    fi
-  fi
-  chmod 600 "$SWAPFILE"
-  if ! mkswap "$SWAPFILE" >/dev/null; then err "mkswap не удался."; rm -f "$SWAPFILE"; pause; return 1; fi
-  if ! swapon "$SWAPFILE"; then
-    err "swapon не удался (возможно, виртуализация запрещает swap)."
-    rm -f "$SWAPFILE"; pause; return 1
-  fi
-  ok "Swap подключён: $size"
-
-  if ! grep -qE "^${SWAPFILE}[[:space:]]" /etc/fstab; then
-    backup_prepare
-    cp -a /etc/fstab "$BACKUP_DIR/fstab.$(date +%Y%m%d-%H%M%S)"
-    printf '%s none swap sw 0 0\n' "$SWAPFILE" >>/etc/fstab
-    ok "Запись добавлена в /etc/fstab (копия fstab в $BACKUP_DIR)."
-  fi
-
   hint "swappiness: чем меньше, тем реже система уходит в swap. Для VPS обычно 10."
   ask_re "vm.swappiness (0–100)" "10" '^([0-9]|[1-9][0-9]|100)$' "Число от 0 до 100."
-  printf '# Создано %s\nvm.swappiness = %s\n' "$APP_NAME" "$ASK_RESULT" >"$SWAP_SYSCTL"
-  sysctl -p "$SWAP_SYSCTL" >/dev/null 2>&1 && ok "vm.swappiness = $ASK_RESULT"
-  echo; free -h
+  local swappiness=$ASK_RESULT
+  confirm "Создать swap $size в $SWAPFILE?" Y || { info "Отменено."; pause; return 0; }
+  if swap_create_apply "$size" "$swappiness"; then echo; free -h; fi
   pause
 }
 
 mod_autoupdates() {
   header "Автообновления безопасности"
-  if is_pkg_installed unattended-upgrades; then
-    ok "unattended-upgrades уже установлен."
-  else
-    apt_install unattended-upgrades || { pause; return 1; }
-  fi
-
-  local f=/etc/apt/apt.conf.d/20auto-upgrades
-  if [[ -f $f ]] && grep -q 'Unattended-Upgrade "1"' "$f"; then
-    ok "Автообновления уже включены."
-  else
-    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' >"$f"
-    ok "Автообновления включены (ставятся только обновления безопасности Ubuntu)."
-  fi
-  systemctl enable --now unattended-upgrades >/dev/null 2>&1
-
-  local rf=/etc/apt/apt.conf.d/52vpsmenu-unattended.conf
-  echo
   hint "Некоторые обновления (ядро) вступают в силу только после перезагрузки."
   hint "Автоперезагрузка кратко прервёт ноду, но контейнеры с restart: always поднимутся сами."
-  if confirm "Разрешить автоперезагрузку ночью (04:00), когда она нужна?" N; then
-    printf 'Unattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:00";\n' >"$rf"
-    ok "Автоперезагрузка включена (04:00)."
-  else
-    rm -f "$rf"
-    info "Автоперезагрузка выключена — перезагружай вручную, когда пишет «Требуется перезагрузка»."
-  fi
+  local reboot=0
+  if confirm "Разрешить автоперезагрузку ночью (04:00), когда она нужна?" N; then reboot=1; fi
+  echo
+  autoupdates_apply "$reboot" || { pause; return 1; }
 
   step "Состояние"
   echo "  служба:  $(systemctl is-active unattended-upgrades 2>/dev/null) / $(systemctl is-enabled unattended-upgrades 2>/dev/null)"
@@ -2541,6 +2225,1362 @@ mod_wizard() {
   pause
 }
 
+# ══════════════════════════ Служебные: key=value файлы ══════════════════════════
+kv_get() { # kv_get ФАЙЛ КЛЮЧ
+  [[ -f $1 ]] || return 0
+  awk -F= -v k="$2" '$1 == k {sub(/^[^=]*=/, ""); print; exit}' "$1"
+}
+
+kv_set() { # kv_set ФАЙЛ КЛЮЧ ЗНАЧЕНИЕ (значение без символов | & \)
+  install -d -m 0755 "$(dirname "$1")" 2>/dev/null
+  touch "$1" || return 1
+  if grep -q "^$2=" "$1"; then
+    sed -i "s|^$2=.*|$2=$3|" "$1"
+  else
+    printf '%s=%s\n' "$2" "$3" >>"$1"
+  fi
+}
+
+kv_del() { # kv_del ФАЙЛ КЛЮЧ
+  [[ -f $1 ]] && sed -i "/^$2=/d" "$1"
+  return 0
+}
+
+reboot_prompt() {
+  [[ -f /var/run/reboot-required ]] || return 0
+  echo
+  warn "Требуется перезагрузка (обновилось ядро или системные библиотеки)."
+  if [[ -f /var/run/reboot-required.pkgs ]]; then sed 's/^/    /' /var/run/reboot-required.pkgs; fi
+  hint "Перезагрузка прервёт SSH-сессию; контейнеры с restart: always поднимутся сами."
+  if confirm "Перезагрузить сервер сейчас?" N; then
+    info "Перезагружаю…"
+    systemctl reboot
+    sleep 5
+  fi
+}
+
+# ══════════════════════════ Рефакторинг: «применить» без вопросов ══════════════════════════
+sys_update_run() {
+  step "apt update"
+  if ! apt_run update -q; then err "apt update завершился с ошибкой."; return 1; fi
+  APT_UPDATED=1
+  step "apt upgrade"
+  if ! apt_run -o Dpkg::Options::=--force-confold upgrade -y -q; then
+    err "apt upgrade завершился с ошибкой."; return 1
+  fi
+  step "apt autoremove"
+  apt_run autoremove -y -q
+  ok "Система обновлена."
+}
+
+tz_ntp_apply() { # tz_ntp_apply ЧАСОВОЙ_ПОЯС (пусто — не менять)
+  local tz=${1:-} tzs
+  if [[ -n $tz ]]; then
+    tzs="$(timedatectl list-timezones 2>/dev/null)"
+    if ! grep -qxF "$tz" <<<"$tzs"; then
+      err "Неизвестный часовой пояс: $tz (список: timedatectl list-timezones)"; return 1
+    fi
+    if timedatectl set-timezone "$tz"; then ok "Часовой пояс: $tz"; else err "Не удалось задать часовой пояс."; return 1; fi
+  fi
+
+  step "Синхронизация времени (NTP)"
+  if is_pkg_installed chrony; then
+    info "Используется chrony — синхронизация идёт через него."
+    service_active chrony || systemctl enable --now chrony >/dev/null 2>&1
+  elif timedatectl set-ntp true 2>/dev/null; then
+    ok "NTP включён."
+  else
+    warn "timedatectl не смог включить NTP — ставлю systemd-timesyncd."
+    if apt_install systemd-timesyncd && systemctl enable --now systemd-timesyncd >/dev/null 2>&1 && timedatectl set-ntp true; then
+      ok "systemd-timesyncd установлен, NTP включён."
+    else
+      err "Не удалось настроить NTP."; return 1
+    fi
+  fi
+  sleep 2
+  if [[ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" == yes ]]; then
+    ok "Время синхронизировано."
+  else
+    warn "Синхронизация пока не подтверждена (может занять до минуты). Проверь позже: timedatectl"
+  fi
+}
+
+user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
+  local user=$1 copy=${2:-ask}
+  if [[ $user == root ]]; then err "root — не новый пользователь."; return 1; fi
+  if [[ ! $user =~ $USERNAME_RE ]]; then err "Недопустимое имя пользователя: $user"; return 1; fi
+
+  step "Создание пользователя"
+  if id "$user" >/dev/null 2>&1; then
+    warn "Пользователь '$user' уже существует — создание пропущено."
+  else
+    info "Сейчас adduser попросит задать пароль и данные (данные можно пропускать Enter)."
+    if ! adduser "$user"; then err "adduser завершился с ошибкой."; return 1; fi
+    if ! id "$user" >/dev/null 2>&1; then err "Пользователь не появился в системе."; return 1; fi
+    ok "Пользователь '$user' создан."
+  fi
+
+  local pst
+  pst="$(passwd -S "$user" 2>/dev/null | awk '{print $2}')"
+  if [[ $pst != P ]]; then
+    warn "У '$user' не задан пароль (статус: ${pst:-?}); для sudo он обычно нужен."
+    if confirm "Задать пароль сейчас?" Y; then passwd "$user"; fi
+  fi
+
+  step "Права sudo"
+  if user_in_sudo "$user"; then
+    ok "'$user' уже в группе sudo."
+  elif usermod -aG sudo "$user"; then
+    ok "'$user' добавлен в группу sudo."
+  else
+    err "Не удалось добавить в группу sudo."; return 1
+  fi
+
+  step "Проверка"
+  id "$user"
+  echo "  groups: $(groups "$user")"
+  if user_in_sudo "$user"; then ok "'$user' состоит в группе sudo."; else err "'$user' НЕ в группе sudo."; fi
+  if sudo -l -U "$user" 2>/dev/null | grep -q 'may run the following'; then
+    ok "sudoers подтверждает права sudo."
+  else
+    warn "sudoers не показывает прав sudo для '$user' — проверь /etc/sudoers."
+  fi
+
+  local home grp do_copy=0
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  grp="$(id -gn "$user")"
+  if [[ -s /root/.ssh/authorized_keys && ! -s "$home/.ssh/authorized_keys" ]]; then
+    case $copy in
+      1) do_copy=1 ;;
+      0) ;;
+      *)
+        echo
+        info "У root есть SSH-ключи, а у '$user' их нет."
+        hint "Если на сервере вход только по ключам, без копирования ты не сможешь зайти новым пользователем."
+        if confirm "Скопировать ключи root пользователю '$user'?" Y; then do_copy=1; fi
+        ;;
+    esac
+    if (( do_copy )); then
+      if install -d -m 700 -o "$user" -g "$grp" "$home/.ssh" &&
+         install -m 600 -o "$user" -g "$grp" /root/.ssh/authorized_keys "$home/.ssh/authorized_keys"; then
+        ok "SSH-ключи root скопированы пользователю '$user'."
+      else
+        err "Не удалось скопировать ключи."
+      fi
+    fi
+  fi
+  return 0
+}
+
+ssh_addkey_apply() { # ssh_addkey_apply ПОЛЬЗОВАТЕЛЬ КЛЮЧ
+  local user=$1 key=$2 fp home grp file
+  if ! id "$user" >/dev/null 2>&1; then err "Пользователя '$user' нет."; return 1; fi
+  if [[ $key == -----* ]]; then
+    err "Это ПРИВАТНЫЙ ключ. Его нельзя никуда вставлять — нужен публичный (файл .pub)."; return 1
+  fi
+  if ! fp="$(pubkey_fingerprint "$key")"; then
+    err "Это не похоже на публичный SSH-ключ (проверка ssh-keygen не прошла)."; return 1
+  fi
+  home="$(getent passwd "$user" | cut -d: -f6)"
+  grp="$(id -gn "$user")"
+  file="$home/.ssh/authorized_keys"
+  if ! install -d -m 700 -o "$user" -g "$grp" "$home/.ssh"; then err "Не удалось создать $home/.ssh"; return 1; fi
+  touch "$file" && chown "$user:$grp" "$file" && chmod 600 "$file"
+  if grep -qxF "$key" "$file"; then
+    warn "Такой ключ у '$user' уже есть."
+  elif printf '%s\n' "$key" >>"$file"; then
+    ok "Ключ добавлен пользователю '$user'."
+  else
+    err "Не удалось записать ключ."; return 1
+  fi
+  info "Отпечаток: $fp"
+}
+
+ufw_apply() { # ufw_apply "порты SSH через пробел" ["доп. порты через пробел: 443 или 443/tcp"]
+  local -a sshp=() extra=()
+  local p
+  read -r -a sshp <<<"$1"
+  read -r -a extra <<<"${2:-}"
+
+  if ufw_is_active; then
+    info "UFW уже включён — только добавляю правила."
+  elif ufw default deny incoming >/dev/null && ufw default allow outgoing >/dev/null; then
+    ok "Политики по умолчанию: входящие закрыты, исходящие открыты."
+  else
+    err "Не удалось задать политики."; return 1
+  fi
+  for p in "${sshp[@]}"; do
+    if ufw allow "${p}/tcp" >/dev/null; then ok "Открыт порт ${p}/tcp (SSH)"; else err "Не удалось открыть ${p}/tcp"; return 1; fi
+  done
+  for p in "${extra[@]}"; do
+    if ufw allow "$p" >/dev/null; then ok "Открыт порт $p"; else err "Не удалось открыть $p"; fi
+  done
+  if ! ufw_is_active; then
+    if ufw --force enable >/dev/null; then ok "UFW включён."; else err "Не удалось включить UFW."; return 1; fi
+    ufw logging low >/dev/null && ok "Логирование: low"
+  fi
+  if ufw_is_active; then ok "Проверка: UFW активен."; else err "UFW не активен!"; return 1; fi
+  for p in "${sshp[@]}"; do
+    if ufw_c status | grep -qE "^${p}/tcp[[:space:]]+ALLOW"; then ok "Правило для ${p}/tcp на месте."; else warn "Правило для ${p}/tcp не найдено в статусе."; fi
+  done
+  echo; ufw status verbose
+}
+
+f2b_install_apply() {
+  if is_pkg_installed fail2ban; then
+    ok "fail2ban уже установлен: $(fail2ban-client --version 2>/dev/null | head -n 1)"
+  else
+    apt_install fail2ban python3-systemd || return 1
+    ok "fail2ban установлен."
+  fi
+  if ! service_enabled fail2ban; then systemctl enable fail2ban >/dev/null 2>&1 && ok "Автозапуск включён."; fi
+  if ! service_active fail2ban; then
+    if systemctl start fail2ban; then ok "fail2ban запущен."; else err "Не удалось запустить fail2ban."; return 1; fi
+    sleep 2
+  fi
+}
+
+f2b_write_jail() { # f2b_write_jail port maxretry findtime bantime ignoreip
+  local port=$1 maxretry=$2 findtime=$3 bantime=$4 ignoreip=$5 bak="" out
+  if [[ -f $F2B_JAIL ]]; then
+    bak="${F2B_JAIL}.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -a "$F2B_JAIL" "$bak" && ok "Резервная копия: $bak"
+  fi
+  cat >"$F2B_JAIL" <<EOF
+# Создано ${APP_NAME} $(date '+%F %T')
+# Основной файл jail.conf не трогаем — свои настройки держим в jail.d.
+[sshd]
+enabled  = true
+port     = ${port}
+backend  = systemd
+maxretry = ${maxretry}
+findtime = ${findtime}
+bantime  = ${bantime}
+ignoreip = ${ignoreip}
+EOF
+  ok "Записан $F2B_JAIL"
+
+  if ! out="$(fail2ban-client -t 2>&1)"; then
+    err "Конфигурация не прошла проверку:"; echo "$out"
+    if [[ -n $bak ]]; then cp -a "$bak" "$F2B_JAIL" && warn "Восстановлена предыдущая версия."; else rm -f "$F2B_JAIL"; warn "Новый файл удалён."; fi
+    return 1
+  fi
+  ok "Проверка конфигурации (fail2ban-client -t) пройдена."
+
+  if ! systemctl restart fail2ban; then
+    err "Не удалось перезапустить fail2ban. Смотри: journalctl -u fail2ban"; return 1
+  fi
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    fail2ban-client ping >/dev/null 2>&1 && break
+    sleep 1
+  done
+  if fail2ban-client ping >/dev/null 2>&1; then ok "fail2ban перезапущен и отвечает."; else err "fail2ban не отвечает после перезапуска."; return 1; fi
+  echo; fail2ban-client status sshd
+}
+
+docker_install_apply() {
+  if cmd_exists docker; then
+    ok "Docker уже установлен: $(docker --version 2>/dev/null)"
+    if ! service_active docker; then
+      if systemctl enable --now docker >/dev/null 2>&1; then ok "Docker запущен."; else err "Не удалось запустить Docker."; return 1; fi
+    fi
+    return 0
+  fi
+  ensure_curl || return 1
+  local tmp rc
+  tmp="$(mktemp)"
+  step "Скачиваю установочный скрипт"
+  if ! download "$DOCKER_URL" "$tmp"; then
+    err "Не удалось скачать $DOCKER_URL (проверь интернет, DNS, доступность сайта)."
+    rm -f "$tmp"; return 1
+  fi
+  ok "Скачано."
+  step "Устанавливаю Docker (это займёт пару минут)"
+  sh "$tmp"; rc=$?
+  rm -f "$tmp"
+  if (( rc != 0 )); then err "Установка завершилась с ошибкой (код $rc). Смотри вывод выше."; return 1; fi
+  systemctl enable --now docker >/dev/null 2>&1
+  if cmd_exists docker && service_active docker; then
+    ok "Docker установлен: $(docker --version)"
+    docker compose version >/dev/null 2>&1 && ok "Compose: $(docker compose version)"
+  else
+    err "Docker установлен, но служба не запущена. Смотри: journalctl -u docker"; return 1
+  fi
+}
+
+docker_logrotate_apply() { # docker_logrotate_apply РАЗМЕР КОЛ-ВО_ФАЙЛОВ
+  local size=$1 nfiles=$2 bak=""
+  if ! cmd_exists docker; then err "Docker не установлен."; return 1; fi
+  if ! cmd_exists python3; then err "Нужен python3 для безопасного изменения daemon.json."; return 1; fi
+  install -d -m 0755 "$(dirname "$DOCKER_DAEMON_JSON")"
+  if [[ -f $DOCKER_DAEMON_JSON ]]; then
+    backup_prepare
+    bak="$BACKUP_DIR/daemon.json.$(date +%Y%m%d-%H%M%S)"
+    cp -a "$DOCKER_DAEMON_JSON" "$bak" && ok "Резервная копия: $bak"
+  fi
+  if ! python3 - "$DOCKER_DAEMON_JSON" "$size" "$nfiles" <<'PY'
+import json, os, sys
+path, size, nfiles = sys.argv[1], sys.argv[2], sys.argv[3]
+data = {}
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    with open(path) as f:
+        data = json.load(f)
+data["log-driver"] = "json-file"
+opts = data.get("log-opts", {})
+opts.update({"max-size": size, "max-file": nfiles})
+data["log-opts"] = opts
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp, path)
+PY
+  then
+    err "Не удалось обновить daemon.json (возможно, в нём некорректный JSON). Файл не изменён."
+    return 1
+  fi
+  ok "daemon.json обновлён."
+  if systemctl restart docker; then
+    ok "Docker перезапущен."
+    info "Драйвер логов: $(docker info --format '{{.LoggingDriver}}' 2>/dev/null)"
+  else
+    err "Docker не запустился с новой конфигурацией — возвращаю прежнюю."
+    if [[ -n $bak ]]; then cp -a "$bak" "$DOCKER_DAEMON_JSON"; else rm -f "$DOCKER_DAEMON_JSON"; fi
+    systemctl restart docker
+    return 1
+  fi
+}
+
+bbr_apply() {
+  local virt cc avail
+  virt="$(systemd-detect-virt 2>/dev/null || true)"
+  if [[ $virt == openvz || $virt == lxc* ]]; then
+    warn "Виртуализация: $virt — менять сетевые параметры ядра в таком контейнере обычно нельзя."
+  fi
+  cc="$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)"
+  if [[ $cc == bbr ]]; then ok "BBR уже включён."; return 0; fi
+  modprobe tcp_bbr 2>/dev/null
+  avail="$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null)"
+  if [[ " $avail " != *" bbr "* ]]; then err "Ядро не поддерживает BBR (доступно: ${avail:-?})."; return 1; fi
+  printf '# Создано %s\nnet.core.default_qdisc = fq\nnet.ipv4.tcp_congestion_control = bbr\n' "$APP_NAME" >"$BBR_SYSCTL"
+  echo tcp_bbr >"/etc/modules-load.d/${APP_NAME}-bbr.conf"
+  sysctl -p "$BBR_SYSCTL" >/dev/null 2>&1
+  if [[ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == bbr ]]; then
+    ok "BBR включён: $(sysctl -n net.ipv4.tcp_congestion_control) / $(sysctl -n net.core.default_qdisc)"
+  else
+    err "Не удалось применить BBR — откатываю."
+    rm -f "$BBR_SYSCTL" "/etc/modules-load.d/${APP_NAME}-bbr.conf"
+    return 1
+  fi
+}
+
+swap_create_apply() { # swap_create_apply РАЗМЕР(512M|1G) SWAPPINESS
+  local size=$1 swappiness=${2:-10} virt size_mb avail_mb fstype active
+  if [[ ! $size =~ ^[1-9][0-9]*[MG]$ ]]; then err "Некорректный размер swap: $size"; return 1; fi
+  active="$(swapon --show --noheadings 2>/dev/null)"
+  if [[ -n $active ]]; then info "Swap уже есть — новый не создаю."; return 0; fi
+  if [[ -e $SWAPFILE ]]; then err "$SWAPFILE уже существует и не подключён — удали его (Оптимизация → Swap)."; return 1; fi
+  virt="$(systemd-detect-virt 2>/dev/null || true)"
+  if [[ $virt == openvz || $virt == lxc* ]]; then
+    warn "Виртуализация: $virt — swap в таком контейнере обычно недоступен."
+  fi
+  if [[ $size == *G ]]; then size_mb=$(( ${size%G} * 1024 )); else size_mb=${size%M}; fi
+  avail_mb="$(df -Pm / | awk 'NR==2 {print $4}')"
+  if (( size_mb + 1024 > avail_mb )); then
+    err "Мало места: свободно ${avail_mb}M, нужно ${size_mb}M плюс запас 1G."; return 1
+  fi
+  fstype="$(findmnt -no FSTYPE / 2>/dev/null)"
+  if [[ $fstype == btrfs || $fstype == zfs ]]; then
+    err "На $fstype swap-файл требует особой настройки — скрипт этого не делает."; return 1
+  fi
+
+  step "Создаю $SWAPFILE"
+  if ! fallocate -l "${size_mb}M" "$SWAPFILE" 2>/dev/null; then
+    info "fallocate недоступен — использую dd (дольше)."
+    if ! dd if=/dev/zero of="$SWAPFILE" bs=1M count="$size_mb" status=none; then
+      err "Не удалось создать файл."; rm -f "$SWAPFILE"; return 1
+    fi
+  fi
+  chmod 600 "$SWAPFILE"
+  if ! mkswap "$SWAPFILE" >/dev/null; then err "mkswap не удался."; rm -f "$SWAPFILE"; return 1; fi
+  if ! swapon "$SWAPFILE"; then
+    err "swapon не удался (возможно, виртуализация запрещает swap)."
+    rm -f "$SWAPFILE"; return 1
+  fi
+  ok "Swap подключён: $size"
+
+  if ! grep -qE "^${SWAPFILE}[[:space:]]" /etc/fstab; then
+    backup_prepare
+    cp -a /etc/fstab "$BACKUP_DIR/fstab.$(date +%Y%m%d-%H%M%S)"
+    printf '%s none swap sw 0 0\n' "$SWAPFILE" >>/etc/fstab
+    ok "Запись добавлена в /etc/fstab (копия fstab в $BACKUP_DIR)."
+  fi
+  printf '# Создано %s\nvm.swappiness = %s\n' "$APP_NAME" "$swappiness" >"$SWAP_SYSCTL"
+  sysctl -p "$SWAP_SYSCTL" >/dev/null 2>&1 && ok "vm.swappiness = $swappiness"
+  return 0
+}
+
+autoupdates_apply() { # autoupdates_apply ПЕРЕЗАГРУЗКА(0|1)
+  local reboot=${1:-0} f=/etc/apt/apt.conf.d/20auto-upgrades rf=/etc/apt/apt.conf.d/52vpsmenu-unattended.conf
+  if is_pkg_installed unattended-upgrades; then
+    ok "unattended-upgrades уже установлен."
+  else
+    apt_install unattended-upgrades || return 1
+  fi
+  if [[ -f $f ]] && grep -q 'Unattended-Upgrade "1"' "$f"; then
+    ok "Автообновления уже включены."
+  else
+    printf 'APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n' >"$f"
+    ok "Автообновления включены (ставятся только обновления безопасности Ubuntu)."
+  fi
+  systemctl enable --now unattended-upgrades >/dev/null 2>&1
+  if [[ $reboot == 1 ]]; then
+    printf 'Unattended-Upgrade::Automatic-Reboot "true";\nUnattended-Upgrade::Automatic-Reboot-Time "04:00";\n' >"$rf"
+    ok "Автоперезагрузка включена (04:00)."
+  else
+    rm -f "$rf"
+    info "Автоперезагрузка выключена — перезагружай вручную, когда пишет «Требуется перезагрузка»."
+  fi
+}
+
+wd_state_get() { kv_get "$REMNA_STATE" "$1"; }
+
+wd_state_set() { kv_set "$REMNA_STATE" "$1" "$2"; }
+
+wd_state_del() { kv_del "$REMNA_STATE" "$1"; }
+
+wd_autorestart_on() { [[ "$(conf_get WATCHDOG_AUTORESTART)" == 1 ]]; }
+
+wd_interval() {
+  local v
+  v="$(conf_get WATCHDOG_INTERVAL)"
+  printf '%s' "${v:-1}"
+}
+
+wd_max_attempts() {
+  local v
+  v="$(conf_get WATCHDOG_MAX_ATTEMPTS)"
+  printf '%s' "${v:-3}"
+}
+
+wd_enabled() { systemctl is-enabled --quiet "${APP_NAME}-watchdog.timer" 2>/dev/null; }
+
+remna_is_running() {
+  service_active docker || return 1
+  [[ -s $REMNA_COMPOSE ]] || return 1
+  local n
+  n="$(cd "$REMNA_DIR" && docker compose ps --status running -q 2>/dev/null | wc -l)"
+  (( n > 0 ))
+}
+
+watchdog_run() { # вызывается таймером systemd: vpsmenu --watchdog
+  [[ -s $REMNA_COMPOSE ]] || return 0
+  install -d -m 0755 "$STATE_DIR" 2>/dev/null
+  exec 9>"$STATE_DIR/watchdog.lock"
+  flock -n 9 || return 0
+
+  local now prev att max
+  now="$(date +%s)"
+  wd_state_set last_check "$now"
+
+  if [[ -f $REMNA_STOP_FLAG ]]; then
+    wd_state_set status stopped
+    wd_state_del down_since
+    return 0
+  fi
+
+  prev="$(wd_state_get status)"
+  if remna_is_running; then
+    if [[ $prev == down || $prev == failed ]]; then log INFO "Remnanode снова работает."; fi
+    wd_state_set status up
+    wd_state_del down_since
+    wd_state_set attempts 0
+    return 0
+  fi
+
+  if [[ $prev != down && $prev != failed ]]; then
+    wd_state_set status down
+    wd_state_set down_since "$now"
+    wd_state_set attempts 0
+    log WARN "Remnanode не работает (обнаружено watchdog)."
+  fi
+  wd_autorestart_on || return 0
+
+  att="$(wd_state_get attempts)"
+  att=${att:-0}
+  max="$(wd_max_attempts)"
+  if (( att >= max )); then
+    wd_state_set status failed
+    return 0
+  fi
+  att=$((att + 1))
+  wd_state_set attempts "$att"
+  log WARN "Авто-перезапуск Remnanode: попытка $att из $max."
+  service_active docker || systemctl start docker
+  (cd "$REMNA_DIR" && docker compose up -d >/dev/null 2>&1)
+  sleep 5
+  if remna_is_running; then
+    wd_state_set status up
+    wd_state_del down_since
+    wd_state_set attempts 0
+    wd_state_set last_restart "$now"
+    wd_state_set restarts_total "$(( $(wd_state_get restarts_total || echo 0) + 1 ))"
+    log OK "Remnanode перезапущен watchdog."
+  else
+    log ERROR "Авто-перезапуск Remnanode не помог (попытка $att из $max)."
+  fi
+}
+
+remna_panel_state() { # печатает «уровень|текст» для панели статусов
+  if [[ ! -s $REMNA_COMPOSE ]]; then echo "off|не настроен"; return 0; fi
+  if ! cmd_exists docker || ! service_active docker; then
+    if [[ -f $REMNA_STOP_FLAG ]]; then echo "warn|остановлен вручную"; else echo "bad|Docker не работает — нода не запущена"; fi
+    return 0
+  fi
+  local n since st txt
+  n="$(rcompose ps --status running -q 2>/dev/null | wc -l)"
+  if (( n > 0 )); then echo "ok|запущен (контейнеров: $n)"; return 0; fi
+  if [[ -f $REMNA_STOP_FLAG ]]; then echo "warn|остановлен вручную"; return 0; fi
+  since="$(wd_state_get down_since)"
+  st="$(wd_state_get status)"
+  txt="упал или не запущен"
+  if [[ -n $since ]]; then txt="упал: не работает с $(date -d "@$since" '+%d.%m %H:%M')"; fi
+  if [[ $st == failed ]]; then
+    txt+=" · авто-перезапуск не помог"
+  elif [[ $st == down ]] && wd_autorestart_on; then
+    txt+=" · идёт авто-перезапуск"
+  fi
+  echo "bad|$txt"
+}
+
+wd_write_units() {
+  if [[ ! -x $INSTALL_PATH ]]; then
+    err "Скрипт не установлен в систему ($INSTALL_PATH) — watchdog запускает его по расписанию."
+    hint "Сначала: Сам скрипт → «Установить эту копию в систему»."
+    return 1
+  fi
+  cat >"$WD_SERVICE" <<EOF
+[Unit]
+Description=${APP_NAME}: проверка Remnanode
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=${INSTALL_PATH} --watchdog
+EOF
+  cat >"$WD_TIMER" <<EOF
+[Unit]
+Description=${APP_NAME}: периодическая проверка Remnanode
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=$(wd_interval)min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+EOF
+  systemctl daemon-reload
+}
+
+watchdog_enable() { # watchdog_enable [АВТОПЕРЕЗАПУСК 0|1 | keep]
+  wd_write_units || return 1
+  if [[ ${1:-keep} != keep ]]; then conf_set WATCHDOG_AUTORESTART "$1"; fi
+  if [[ -z "$(conf_get WATCHDOG_AUTORESTART)" ]]; then conf_set WATCHDOG_AUTORESTART 0; fi
+  if systemctl enable --now "${APP_NAME}-watchdog.timer" >/dev/null 2>&1; then
+    ok "Watchdog включён: проверка каждые $(wd_interval) мин."
+    if wd_autorestart_on; then info "Автоперезапуск: включён."; else info "Автоперезапуск: выключен (нода только помечается в меню как упавшая)."; fi
+  else
+    err "Не удалось включить таймер ${APP_NAME}-watchdog.timer."; return 1
+  fi
+}
+
+watchdog_disable() {
+  systemctl disable --now "${APP_NAME}-watchdog.timer" >/dev/null 2>&1
+  rm -f "$WD_SERVICE" "$WD_TIMER"
+  systemctl daemon-reload
+  ok "Watchdog выключен."
+}
+
+mod_wd_status() {
+  header "Watchdog Remnanode"
+  if wd_enabled; then ok "Контроль: включён (проверка каждые $(wd_interval) мин)"; else info "Контроль: выключен"; fi
+  if wd_autorestart_on; then
+    ok "Автоперезапуск: включён (до $(wd_max_attempts) попыток подряд)"
+  else
+    info "Автоперезапуск: выключен (по умолчанию)"
+  fi
+  echo
+  local st since
+  st="$(wd_state_get status)"
+  since="$(wd_state_get down_since)"
+  info "Состояние по данным watchdog: ${st:-нет данных}"
+  if [[ -n $since ]]; then info "Не работает с: $(date -d "@$since" '+%d.%m.%Y %H:%M')"; fi
+  info "Попыток в текущем сбое: $(wd_state_get attempts)/$(wd_max_attempts) · всего авто-перезапусков: $(wd_state_get restarts_total)"
+  if [[ -n "$(wd_state_get last_check)" ]]; then info "Последняя проверка: $(date -d "@$(wd_state_get last_check)" '+%d.%m %H:%M:%S')"; fi
+  if [[ -f $REMNA_STOP_FLAG ]]; then warn "Нода остановлена вручную — watchdog её не трогает."; fi
+  echo
+  hint "Последние события:"
+  grep -E 'Remnanode' "$LOG_FILE" 2>/dev/null | tail -n 6 | sed 's/^/    /'
+  pause
+}
+
+mod_wd_toggle() {
+  header "Watchdog: включить / выключить"
+  if wd_enabled; then
+    info "Сейчас watchdog включён."
+    confirm "Выключить?" N && watchdog_disable
+  else
+    info "Watchdog следит, работает ли нода, и записывает время падения."
+    hint "Автоперезапуск настраивается отдельно и по умолчанию выключен."
+    if confirm "Включить watchdog?" Y; then
+      local ar=keep
+      if [[ -z "$(conf_get WATCHDOG_AUTORESTART)" ]]; then
+        if confirm "Включить автоперезапуск при падении?" N; then ar=1; else ar=0; fi
+      fi
+      watchdog_enable "$ar"
+    fi
+  fi
+  pause
+}
+
+mod_wd_autorestart() {
+  header "Watchdog: автоперезапуск"
+  if wd_autorestart_on; then
+    info "Сейчас автоперезапуск ВКЛЮЧЁН."
+    if confirm "Выключить (нода будет только помечаться упавшей)?" N; then conf_set WATCHDOG_AUTORESTART 0; ok "Автоперезапуск выключен."; fi
+  else
+    info "Сейчас автоперезапуск ВЫКЛЮЧЕН (по умолчанию)."
+    hint "При падении watchdog попробует поднять ноду, не более $(wd_max_attempts) попыток подряд."
+    if confirm "Включить автоперезапуск?" N; then conf_set WATCHDOG_AUTORESTART 1; ok "Автоперезапуск включён."; fi
+  fi
+  if ! wd_enabled; then warn "Сам watchdog выключен — настройка заработает после его включения."; fi
+  pause
+}
+
+mod_wd_interval() {
+  header "Watchdog: интервал проверки"
+  ask_re "Как часто проверять, минут (1–60)" "$(wd_interval)" '^([1-9]|[1-5][0-9]|60)$' "Число от 1 до 60."
+  conf_set WATCHDOG_INTERVAL "$ASK_RESULT"
+  ok "Интервал: $ASK_RESULT мин."
+  if wd_enabled; then wd_write_units && systemctl restart "${APP_NAME}-watchdog.timer" && ok "Таймер обновлён."; fi
+  pause
+}
+
+mod_wd_attempts() {
+  header "Watchdog: максимум попыток"
+  hint "Сколько раз подряд пытаться поднять упавшую ноду, прежде чем сдаться и пометить «авто-перезапуск не помог»."
+  ask_re "Попыток подряд (1–10)" "$(wd_max_attempts)" '^([1-9]|10)$' "Число от 1 до 10."
+  conf_set WATCHDOG_MAX_ATTEMPTS "$ASK_RESULT"
+  ok "Максимум попыток: $ASK_RESULT"
+  pause
+}
+
+mod_wd_log() {
+  header "Watchdog: журнал событий"
+  grep -E 'Remnanode' "$LOG_FILE" 2>/dev/null | tail -n 100 | show_paged
+  pause
+}
+
+menu_watchdog() {
+  while true; do
+    header "Remnanode: watchdog"
+    if wd_enabled; then info "Контроль включён · автоперезапуск: $(wd_autorestart_on && echo включён || echo выключен)"; else info "Контроль выключен"; fi
+    echo
+    menu_item 1 "Статус и события"
+    menu_item 2 "Включить / выключить watchdog"
+    menu_item 3 "Автоперезапуск: включить / выключить"
+    menu_item 4 "Интервал проверки"
+    menu_item 5 "Максимум попыток подряд"
+    menu_item 6 "Журнал событий"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) mod_wd_status ;;
+      2) mod_wd_toggle ;;
+      3) mod_wd_autorestart ;;
+      4) mod_wd_interval ;;
+      5) mod_wd_attempts ;;
+      6) mod_wd_log ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+
+# ══════════════════════════ Диагностика сети и Speedtest ══════════════════════════
+speedtest_bin() { # печатает имя команды, если speedtest-cli (или официальный speedtest) установлен
+  if cmd_exists speedtest-cli; then echo speedtest-cli
+  elif cmd_exists speedtest; then echo speedtest
+  fi
+}
+
+speedtest_install() {
+  local b
+  b="$(speedtest_bin)"
+  if [[ -n $b ]]; then
+    ok "Speedtest уже установлен: $(command -v "$b") ($("$b" --version 2>&1 | head -n 1))"
+    return 0
+  fi
+  info "speedtest-cli не найден — устанавливаю из репозитория Ubuntu."
+  apt_install speedtest-cli || return 1
+  if cmd_exists speedtest-cli; then
+    ok "Установлен: $(speedtest-cli --version 2>&1 | head -n 1)"
+  else
+    err "Пакет установился, но команды speedtest-cli нет."; return 1
+  fi
+}
+
+mod_speedtest_status() {
+  header "Speedtest: установка и статус"
+  local b
+  b="$(speedtest_bin)"
+  if [[ -n $b ]]; then
+    ok "Установлен: $(command -v "$b")"
+    info "Версия: $("$b" --version 2>&1 | head -n 1)"
+    if [[ $b == speedtest ]]; then hint "Это официальный клиент Ookla (команда speedtest), не python-версия speedtest-cli."; fi
+  else
+    warn "Speedtest не установлен."
+    if confirm "Установить speedtest-cli?" Y; then speedtest_install; fi
+  fi
+  pause
+}
+
+mod_speedtest_run() {
+  header "Тест скорости"
+  local b rc
+  b="$(speedtest_bin)"
+  if [[ -z $b ]]; then
+    warn "Speedtest не установлен."
+    confirm "Установить speedtest-cli?" Y || { pause; return 0; }
+    speedtest_install || { pause; return 1; }
+    b="$(speedtest_bin)"
+  fi
+  info "Запускаю тест (до 2,5 минут, Ctrl+C — прервать)…"
+  if [[ $b == speedtest-cli ]]; then
+    run_interruptible timeout 150 speedtest-cli --simple
+    rc=$?
+    if (( rc != 0 && rc != 130 )); then
+      warn "Первая попытка не удалась — пробую через HTTPS (--secure)."
+      run_interruptible timeout 150 speedtest-cli --secure --simple
+    fi
+  else
+    run_interruptible timeout 150 speedtest --accept-license --accept-gdpr
+  fi
+  pause
+}
+
+mod_net_ping() {
+  header "Задержка до серверов"
+  if ! cmd_exists ping; then apt_install iputils-ping || { pause; return 1; }; fi
+  local t out loss avg
+  printf '  %-14s %-14s %s\n' "Host" "Loss" "Avg"
+  for t in 1.1.1.1 8.8.8.8 ya.ru github.com; do
+    out="$(ping -c 4 -W 2 -q "$t" 2>&1)"
+    loss="$(grep -oE '[0-9]+(\.[0-9]+)?% packet loss' <<<"$out" | head -n 1 | awk '{print $1}')"
+    avg="$(awk -F'/' '/^rtt|^round-trip/ {print $5}' <<<"$out")"
+    if [[ -z $loss ]]; then
+      printf '  %-14s %s\n' "$t" "${C_RED}недоступен или не резолвится${C_RESET}"
+    elif [[ $loss == 100% ]]; then
+      printf '  %-14s %s\n' "$t" "${C_RED}100% потерь (ICMP может быть закрыт)${C_RESET}"
+    else
+      printf '  %-14s %-14s %s\n' "$t" "$loss" "${avg:-?} мс"
+    fi
+  done
+  pause
+}
+
+mod_net_reach() {
+  header "Доступность нужных ресурсов"
+  ensure_curl || { pause; return 1; }
+  local entry label url code t res
+  for entry in \
+    "GitHub|https://github.com" \
+    "GitHub raw|https://raw.githubusercontent.com" \
+    "Docker Hub|https://registry-1.docker.io/v2/" \
+    "get.docker.com|https://get.docker.com" \
+    "GHCR|https://ghcr.io/v2/" \
+    "Ubuntu apt|http://archive.ubuntu.com"; do
+    label=${entry%%|*}
+    url=${entry##*|}
+    res="$(curl -s -o /dev/null -w '%{http_code} %{time_total}' --connect-timeout 5 --max-time 10 "$url" 2>/dev/null)"
+    code=${res%% *}
+    t=${res##* }
+    t="${t%"${t#*.??}"}"
+    case $code in
+      2??|3??|401|403) printf '  %s %-15s HTTP %s · %s с\n' "${C_GREEN}●${C_RESET}" "$label" "$code" "$t" ;;
+      *)               printf '  %s %-15s %s\n' "${C_RED}●${C_RESET}" "$label" "недоступен (код ${code:-000})" ;;
+    esac
+  done
+  echo
+  hint "401/403 у Docker Hub и GHCR — нормально: сервис отвечает, просто просит авторизацию."
+  pause
+}
+
+mod_net_ip() {
+  header "Внешний IP"
+  ensure_curl || { pause; return 1; }
+  local ip4 ip6 u
+  for u in https://api.ipify.org https://ifconfig.me https://icanhazip.com; do
+    ip4="$(curl -4 -fsS --max-time 6 "$u" 2>/dev/null)" && [[ -n $ip4 ]] && break
+    ip4=""
+  done
+  for u in https://api64.ipify.org https://ifconfig.co; do
+    ip6="$(curl -6 -fsS --max-time 6 "$u" 2>/dev/null)" && [[ -n $ip6 ]] && break
+    ip6=""
+  done
+  printf '  %-6s %s\n' "IPv4" "${ip4:-не определён}"
+  printf '  %-6s %s\n' "IPv6" "${ip6:-нет или не определён}"
+  info "Локальные адреса: $(hostname -I 2>/dev/null)"
+  pause
+}
+
+mod_net_ports() {
+  header "Какие порты слушает сервер"
+  hint "Это то, что слушает сам сервер. Что реально доступно снаружи, решает ещё и файрвол (UFW, панель хостера)."
+  echo
+  ss -tulpn | show_paged
+  pause
+}
+
+menu_net() {
+  while true; do
+    header "14. Диагностика сети"
+    local b
+    b="$(speedtest_bin)"
+    if [[ -n $b ]]; then info "Speedtest: установлен ($b)"; else info "Speedtest: не установлен"; fi
+    echo
+    menu_item 1 "Тест скорости (speedtest-cli)"
+    menu_item 2 "Установка / статус speedtest-cli"
+    menu_item 3 "Задержка (ping до 1.1.1.1, 8.8.8.8, ya.ru, github.com)"
+    menu_item 4 "Доступность ресурсов (GitHub, Docker Hub, apt…)"
+    menu_item 5 "Внешний IP"
+    menu_item 6 "Какие порты слушает сервер"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) mod_speedtest_run ;;
+      2) mod_speedtest_status ;;
+      3) mod_net_ping ;;
+      4) mod_net_reach ;;
+      5) mod_net_ip ;;
+      6) mod_net_ports ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+
+# ══════════════════════════ Профили серверов ══════════════════════════
+PROFILE_KEYS=(SYSTEM_UPDATE TIMEZONE NEW_USER COPY_ROOT_KEYS USER_SSH_KEY SSH_DISABLE_ROOT SSH_KEYS_ONLY
+  UFW UFW_EXTRA_PORTS NFTABLES FAIL2BAN F2B_MAXRETRY F2B_FINDTIME F2B_BANTIME F2B_IGNOREIP
+  DOCKER DOCKER_LOG_SIZE DOCKER_LOG_FILES BBR SWAP_SIZE SWAPPINESS AUTOUPDATES AUTOREBOOT
+  SPEEDTEST REMNANODE WATCHDOG WATCHDOG_AUTORESTART WARP)
+
+declare -A PROFILE_DEF=(
+  [SYSTEM_UPDATE]=0 [TIMEZONE]="" [NEW_USER]="" [COPY_ROOT_KEYS]=1 [USER_SSH_KEY]=""
+  [SSH_DISABLE_ROOT]=0 [SSH_KEYS_ONLY]=0 [UFW]=0 [UFW_EXTRA_PORTS]="" [NFTABLES]=0
+  [FAIL2BAN]=0 [F2B_MAXRETRY]=3 [F2B_FINDTIME]=10m [F2B_BANTIME]=2d [F2B_IGNOREIP]="127.0.0.1/8 ::1"
+  [DOCKER]=0 [DOCKER_LOG_SIZE]="" [DOCKER_LOG_FILES]=3 [BBR]=0 [SWAP_SIZE]="" [SWAPPINESS]=10
+  [AUTOUPDATES]=0 [AUTOREBOOT]=0 [SPEEDTEST]=0 [REMNANODE]=0 [WATCHDOG]=0 [WATCHDOG_AUTORESTART]=0 [WARP]=0
+)
+
+declare -A P=()
+declare -a PLAN_IDS=() PLAN_TITLES=()
+STEP_PAUSED=0
+profile_reset() {
+  local k
+  P=()
+  for k in "${PROFILE_KEYS[@]}"; do P[$k]="${PROFILE_DEF[$k]}"; done
+}
+
+profile_value_ok() { # profile_value_ok КЛЮЧ ЗНАЧЕНИЕ
+  local k=$1 v=$2 re
+  case $k in
+    SYSTEM_UPDATE|COPY_ROOT_KEYS|SSH_DISABLE_ROOT|SSH_KEYS_ONLY|UFW|NFTABLES|FAIL2BAN|DOCKER|BBR|AUTOUPDATES|AUTOREBOOT|SPEEDTEST|REMNANODE|WATCHDOG|WATCHDOG_AUTORESTART|WARP)
+      re='^[01]$' ;;
+    TIMEZONE) re='^[A-Za-z0-9_+/-]*$' ;;
+    NEW_USER)
+      if [[ -z $v || $v == ASK ]]; then return 0; fi
+      re=$USERNAME_RE ;;
+    USER_SSH_KEY)
+      if [[ -z $v || $v == ASK ]]; then return 0; fi
+      re='^(ssh-|ecdsa-|sk-)[^[:space:]]+ [A-Za-z0-9+/=]+( .*)?$' ;;
+    UFW_EXTRA_PORTS) re='^$|^[0-9]{1,5}(/(tcp|udp))?( [0-9]{1,5}(/(tcp|udp))?)*$' ;;
+    F2B_MAXRETRY|DOCKER_LOG_FILES) re='^[1-9][0-9]*$' ;;
+    F2B_FINDTIME) re='^[0-9]+(s|m|h|d|w|mo|y)?$' ;;
+    F2B_BANTIME) re='^(-1|[0-9]+(s|m|h|d|w|mo|y)?)$' ;;
+    F2B_IGNOREIP) re='^[0-9a-fA-F:./ ]+$' ;;
+    DOCKER_LOG_SIZE) re='^([1-9][0-9]*[kmg])?$' ;;
+    SWAP_SIZE) re='^([1-9][0-9]*[MG])?$' ;;
+    SWAPPINESS) re='^([0-9]|[1-9][0-9]|100)$' ;;
+    *) return 1 ;;
+  esac
+  [[ $v =~ $re ]]
+}
+
+profile_parse() { # читает КЛЮЧ=значение со stdin в массив P; ничего не исполняет
+  local line k v bad=0
+  profile_reset
+  while IFS= read -r line || [[ -n $line ]]; do
+    line="${line%$'\r'}"
+    if [[ $line =~ ^[[:space:]]*(#|$) ]]; then continue; fi
+    if [[ $line =~ ^([A-Z0-9_]+)=(.*)$ ]]; then
+      k=${BASH_REMATCH[1]}
+      v="$(trim "${BASH_REMATCH[2]}")"
+      v="${v#\"}"; v="${v%\"}"
+      if profile_value_ok "$k" "$v"; then
+        P[$k]=$v
+      else
+        err "Профиль: недопустимый параметр или значение: $k=$v"; bad=1
+      fi
+    else
+      err "Профиль: не понимаю строку: $line"; bad=1
+    fi
+  done
+  return $bad
+}
+
+profile_preset_title() {
+  case $1 in
+    node-full) echo "Нода: полный стек (защита, Docker, Remnanode, WARP, оптимизация)" ;;
+    minimal)   echo "Минимальная защита (пользователь, запрет root, UFW, Fail2ban)" ;;
+    hardened)  echo "Усиленная защита (минимум + вход по ключам, автообновления, BBR, swap)" ;;
+  esac
+}
+
+profile_preset_text() {
+  case $1 in
+    node-full) cat <<'EOF'
+SYSTEM_UPDATE=1
+TIMEZONE=UTC
+NEW_USER=ASK
+COPY_ROOT_KEYS=1
+USER_SSH_KEY=ASK
+SSH_DISABLE_ROOT=1
+SSH_KEYS_ONLY=0
+UFW=1
+UFW_EXTRA_PORTS=
+NFTABLES=1
+FAIL2BAN=1
+F2B_MAXRETRY=3
+F2B_FINDTIME=10m
+F2B_BANTIME=2d
+F2B_IGNOREIP=127.0.0.1/8 ::1
+DOCKER=1
+DOCKER_LOG_SIZE=10m
+DOCKER_LOG_FILES=3
+BBR=1
+SWAP_SIZE=2G
+SWAPPINESS=10
+AUTOUPDATES=1
+AUTOREBOOT=0
+SPEEDTEST=0
+REMNANODE=1
+WATCHDOG=1
+WATCHDOG_AUTORESTART=0
+WARP=1
+EOF
+      ;;
+    minimal) cat <<'EOF'
+SYSTEM_UPDATE=1
+NEW_USER=ASK
+COPY_ROOT_KEYS=1
+SSH_DISABLE_ROOT=1
+UFW=1
+FAIL2BAN=1
+F2B_MAXRETRY=3
+F2B_FINDTIME=10m
+F2B_BANTIME=2d
+EOF
+      ;;
+    hardened) cat <<'EOF'
+SYSTEM_UPDATE=1
+TIMEZONE=UTC
+NEW_USER=ASK
+COPY_ROOT_KEYS=1
+USER_SSH_KEY=ASK
+SSH_DISABLE_ROOT=1
+SSH_KEYS_ONLY=1
+UFW=1
+FAIL2BAN=1
+F2B_MAXRETRY=3
+F2B_FINDTIME=10m
+F2B_BANTIME=7d
+AUTOUPDATES=1
+AUTOREBOOT=0
+BBR=1
+SWAP_SIZE=2G
+SWAPPINESS=10
+EOF
+      ;;
+    *) return 1 ;;
+  esac
+}
+
+profile_load_preset() { profile_parse < <(profile_preset_text "$1"); }
+
+profile_add() { PLAN_IDS+=("$1"); PLAN_TITLES+=("$2"); }
+
+profile_plan() {
+  PLAN_IDS=(); PLAN_TITLES=()
+  if [[ ${P[SYSTEM_UPDATE]} == 1 ]]; then profile_add update "Обновление системы"; fi
+  if [[ -n ${P[TIMEZONE]} ]]; then profile_add tz "Часовой пояс ${P[TIMEZONE]} и NTP"; fi
+  if [[ -n ${P[NEW_USER]} ]]; then
+    local who=${P[NEW_USER]}
+    if [[ $who == ASK ]]; then who="имя спросим при применении"; fi
+    profile_add user "Пользователь с sudo ($who)"
+  fi
+  if [[ ${P[SSH_DISABLE_ROOT]} == 1 ]]; then profile_add root "SSH: запрет входа под root"; fi
+  if [[ ${P[SSH_KEYS_ONLY]} == 1 ]]; then profile_add keys "SSH: вход только по ключам"; fi
+  if [[ ${P[UFW]} == 1 ]]; then
+    local ut="UFW (порт SSH определится сам"
+    if [[ -n ${P[UFW_EXTRA_PORTS]} ]]; then ut+="; ещё: ${P[UFW_EXTRA_PORTS]}"; fi
+    profile_add ufw "$ut)"
+  fi
+  if [[ ${P[NFTABLES]} == 1 ]]; then profile_add nft "nftables"; fi
+  if [[ ${P[FAIL2BAN]} == 1 ]]; then
+    profile_add f2b "Fail2ban (maxretry ${P[F2B_MAXRETRY]}, findtime ${P[F2B_FINDTIME]}, bantime ${P[F2B_BANTIME]})"
+  fi
+  if [[ ${P[DOCKER]} == 1 ]]; then
+    local dt="Docker"
+    if [[ -n ${P[DOCKER_LOG_SIZE]} ]]; then dt+=" + ротация логов ${P[DOCKER_LOG_SIZE]}×${P[DOCKER_LOG_FILES]}"; fi
+    profile_add docker "$dt"
+  fi
+  if [[ ${P[BBR]} == 1 ]]; then profile_add bbr "BBR"; fi
+  if [[ -n ${P[SWAP_SIZE]} ]]; then profile_add swap "Swap ${P[SWAP_SIZE]} (swappiness ${P[SWAPPINESS]})"; fi
+  if [[ ${P[AUTOUPDATES]} == 1 ]]; then
+    local at="Автообновления безопасности"
+    if [[ ${P[AUTOREBOOT]} == 1 ]]; then at+=" + автоперезагрузка"; fi
+    profile_add autoupd "$at"
+  fi
+  if [[ ${P[SPEEDTEST]} == 1 ]]; then profile_add speedtest "Speedtest-cli"; fi
+  if [[ ${P[REMNANODE]} == 1 ]]; then profile_add remna "Remnanode (папка, compose-файл, запуск)"; fi
+  if [[ ${P[WATCHDOG]} == 1 ]]; then
+    local wt="Watchdog Remnanode"
+    if [[ ${P[WATCHDOG_AUTORESTART]} == 1 ]]; then wt+=" с автоперезапуском"; else wt+=" (автоперезапуск выключен)"; fi
+    profile_add watchdog "$wt"
+  fi
+  if [[ ${P[WARP]} == 1 ]]; then profile_add warp "WARP Native"; fi
+  return 0
+}
+
+profile_step_user() {
+  local name=${P[NEW_USER]} key=${P[USER_SSH_KEY]}
+  if [[ $name == ASK ]]; then
+    ask_re "Имя нового пользователя" "" "$USERNAME_RE" "Допустимо: a-z, 0-9, _ и -, начинать с буквы, до 32 символов."
+    name=$ASK_RESULT
+  fi
+  user_setup "$name" "${P[COPY_ROOT_KEYS]}" || return 1
+  if [[ $key == ASK ]]; then
+    echo
+    ask "Публичный SSH-ключ для '$name' одной строкой (Enter — пропустить)"
+    key=$ASK_RESULT
+  fi
+  if [[ -n $key ]]; then ssh_addkey_apply "$name" "$key" || return 1; fi
+  return 0
+}
+
+profile_step_ufw() {
+  if ! cmd_exists ufw; then apt_install ufw || return 1; fi
+  ufw_apply "$(detect_ssh_ports)" "${P[UFW_EXTRA_PORTS]}"
+}
+
+profile_step_f2b() {
+  f2b_install_apply || return 1
+  f2b_write_jail "$(detect_ssh_ports | tr ' ' ',')" "${P[F2B_MAXRETRY]}" "${P[F2B_FINDTIME]}" "${P[F2B_BANTIME]}" "${P[F2B_IGNOREIP]}"
+}
+
+profile_step_docker() {
+  docker_install_apply || return 1
+  if [[ -n ${P[DOCKER_LOG_SIZE]} ]]; then
+    step "Ротация логов Docker"
+    docker_logrotate_apply "${P[DOCKER_LOG_SIZE]}" "${P[DOCKER_LOG_FILES]}" || return 1
+  fi
+  return 0
+}
+
+profile_step() { # profile_step ШАГ; пункты с собственными подтверждениями сами делают pause
+  STEP_PAUSED=0
+  case $1 in
+    update)    sys_update_run ;;
+    tz)        tz_ntp_apply "${P[TIMEZONE]}" ;;
+    user)      profile_step_user ;;
+    root)      mod_ssh_disable_root; STEP_PAUSED=1 ;;
+    keys)      mod_ssh_keys_only; STEP_PAUSED=1 ;;
+    ufw)       profile_step_ufw ;;
+    nft)       mod_nft_setup; STEP_PAUSED=1 ;;
+    f2b)       profile_step_f2b ;;
+    docker)    profile_step_docker ;;
+    bbr)       bbr_apply ;;
+    swap)      swap_create_apply "${P[SWAP_SIZE]}" "${P[SWAPPINESS]}" ;;
+    autoupd)   autoupdates_apply "${P[AUTOREBOOT]}" ;;
+    speedtest) speedtest_install ;;
+    remna)     mod_remna_setup; STEP_PAUSED=1 ;;
+    watchdog)  watchdog_enable "${P[WATCHDOG_AUTORESTART]}" ;;
+    warp)      mod_warp; STEP_PAUSED=1 ;;
+    *)         err "Неизвестный шаг: $1"; return 1 ;;
+  esac
+}
+
+profile_apply() { # применяет профиль из массива P
+  profile_plan
+  local total=${#PLAN_IDS[@]} i n=0 id title
+  if (( total == 0 )); then warn "В профиле нет ни одного включённого шага."; return 1; fi
+  echo
+  info "План ($total шагов):"
+  for i in "${!PLAN_IDS[@]}"; do printf '    %2d. %s\n' "$((i + 1))" "${PLAN_TITLES[$i]}"; done
+  echo
+  hint "Шаги, влияющие на доступ к серверу (запрет root, вход по ключам), как всегда, потребуют подтверждения."
+  confirm "Применить профиль?" Y || { info "Отменено."; return 1; }
+
+  for i in "${!PLAN_IDS[@]}"; do
+    id=${PLAN_IDS[$i]}
+    title=${PLAN_TITLES[$i]}
+    n=$((n + 1))
+    header "Профиль: шаг $n из $total"
+    printf '  %s%s%s\n\n' "$C_BOLD" "$title" "$C_RESET"
+    if profile_step "$id"; then
+      log INFO "Профиль: шаг «$title» выполнен"
+    else
+      warn "Шаг «$title» завершился с ошибкой."
+      if (( ! STEP_PAUSED )); then pause; fi
+      confirm "Продолжить со следующим шагом?" Y || { info "Применение остановлено."; return 1; }
+      continue
+    fi
+    if (( ! STEP_PAUSED )); then pause; fi
+  done
+  header "Профиль применён"
+  ok "Все шаги выполнены."
+  hint "Итоговое состояние: главное меню → «Обзор системы»."
+  reboot_prompt
+  return 0
+}
+
+pq_bool() { # pq_bool КЛЮЧ "Вопрос"
+  local def=N
+  if [[ ${P[$1]} == 1 ]]; then def=Y; fi
+  if confirm "$2" "$def"; then P[$1]=1; else P[$1]=0; fi
+}
+
+pq_val() { # pq_val КЛЮЧ "Вопрос" ["Подсказка"]
+  if [[ -n ${3:-} ]]; then hint "$3"; fi
+  while true; do
+    ask "$2" "${P[$1]}"
+    if [[ $ASK_RESULT == "-" ]]; then ASK_RESULT=""; fi
+    if profile_value_ok "$1" "$ASK_RESULT"; then P[$1]=$ASK_RESULT; return 0; fi
+    err "Недопустимое значение."
+  done
+}
+
+profile_questionnaire() {
+  info "Отвечай на вопросы: Enter — оставить значение в скобках, «-» — очистить поле."
+  step "Система"
+  pq_bool SYSTEM_UPDATE "Обновить систему (apt upgrade)?"
+  pq_val TIMEZONE "Часовой пояс" "Например UTC или Europe/Moscow. Пусто — не менять."
+  step "Доступ"
+  pq_val NEW_USER "Создать пользователя с sudo" "Имя пользователя, ASK — спросить при применении, пусто — не создавать."
+  if [[ -n ${P[NEW_USER]} ]]; then
+    pq_bool COPY_ROOT_KEYS "Скопировать ему SSH-ключи root?"
+    pq_val USER_SSH_KEY "Публичный SSH-ключ для него" "Строка ключа целиком, ASK — спросить при применении, пусто — не добавлять."
+  fi
+  pq_bool SSH_DISABLE_ROOT "Запретить вход под root?"
+  pq_bool SSH_KEYS_ONLY "Вход только по ключам (отключить пароль)?"
+  step "Файрвол и защита"
+  pq_bool UFW "Настроить UFW?"
+  if [[ ${P[UFW]} == 1 ]]; then
+    pq_val UFW_EXTRA_PORTS "Дополнительные порты" "Через пробел, например: 443/tcp 2222/tcp. Порт SSH откроется сам."
+  fi
+  pq_bool NFTABLES "Установить nftables?"
+  pq_bool FAIL2BAN "Настроить Fail2ban для SSH?"
+  if [[ ${P[FAIL2BAN]} == 1 ]]; then
+    pq_val F2B_MAXRETRY "maxretry — попыток до бана" "Целое число, обычно 3–5."
+    pq_val F2B_FINDTIME "findtime — окно подсчёта попыток" "Число + s/m/h/d/w, например 10m."
+    pq_val F2B_BANTIME "bantime — срок бана" "Например 12h, 2d, 1w; -1 — навсегда."
+    pq_val F2B_IGNOREIP "ignoreip — адреса вне бана" "Через пробел; добавь свой IP, чтобы не забанить себя."
+  fi
+  step "Docker и сеть"
+  pq_bool DOCKER "Установить Docker?"
+  if [[ ${P[DOCKER]} == 1 ]]; then
+    pq_val DOCKER_LOG_SIZE "Ротация логов: max-size" "Например 10m. Пусто — ротацию не настраивать."
+    if [[ -n ${P[DOCKER_LOG_SIZE]} ]]; then pq_val DOCKER_LOG_FILES "Ротация логов: max-file (сколько файлов)" ""; fi
+  fi
+  pq_bool BBR "Включить BBR?"
+  pq_val SWAP_SIZE "Swap: размер" "Например 1G или 2G. Пусто — не создавать."
+  if [[ -n ${P[SWAP_SIZE]} ]]; then pq_val SWAPPINESS "Swap: swappiness (0–100)" "Для VPS обычно 10."; fi
+  pq_bool AUTOUPDATES "Включить автообновления безопасности?"
+  if [[ ${P[AUTOUPDATES]} == 1 ]]; then pq_bool AUTOREBOOT "Разрешить ночную автоперезагрузку (04:00)?"; fi
+  pq_bool SPEEDTEST "Установить speedtest-cli?"
+  step "Приложения"
+  pq_bool REMNANODE "Настроить Remnanode?"
+  pq_bool WATCHDOG "Включить watchdog для Remnanode?"
+  if [[ ${P[WATCHDOG]} == 1 ]]; then pq_bool WATCHDOG_AUTORESTART "Автоперезапуск ноды при падении? (по умолчанию выключено)"; fi
+  pq_bool WARP "Запустить установщик WARP Native?"
+}
+
+profile_save() { # сохраняет текущий P в /etc/vpsmenu/profiles/ИМЯ.conf
+  local name file k
+  ask_re "Имя профиля (a-z, 0-9, - и _)" "" '^[a-z0-9][a-z0-9_-]{0,30}$' "Допустимо: a-z, 0-9, - и _, до 31 символа."
+  name=$ASK_RESULT
+  file="$PROFILE_DIR/$name.conf"
+  install -d -m 0700 "$PROFILE_DIR"
+  if [[ -f $file ]]; then confirm "Профиль '$name' уже есть. Перезаписать?" N || return 1; fi
+  {
+    printf '# Профиль %s: %s (создан %s)\n' "$APP_NAME" "$name" "$(date '+%F %T')"
+    printf '# Формат: КЛЮЧ=значение (значение до конца строки, без кавычек). 1/0 — включить/выключить шаг.\n'
+    printf '# NEW_USER и USER_SSH_KEY могут быть ASK — тогда скрипт спросит при применении.\n'
+    for k in "${PROFILE_KEYS[@]}"; do printf '%s=%s\n' "$k" "${P[$k]}"; done
+  } >"$file"
+  chmod 600 "$file"
+  ok "Профиль сохранён: $file"
+  hint "Чтобы взять его на другом сервере, положи файл в репозиторий: profiles/$name.conf — и скачай через «Профили → Скачать из GitHub»."
+}
+
+mod_profile_preset() {
+  header "Профили: готовые наборы"
+  menu_item 1 "$(profile_preset_title node-full)"
+  menu_item 2 "$(profile_preset_title minimal)"
+  menu_item 3 "$(profile_preset_title hardened)"
+  menu_item 0 "Назад"
+  echo; read_choice
+  local id
+  case $CHOICE in
+    1) id=node-full ;;
+    2) id=minimal ;;
+    3) id=hardened ;;
+    *) return 0 ;;
+  esac
+  profile_load_preset "$id" || { err "Не удалось загрузить набор."; pause; return 1; }
+  header "Профиль: $(profile_preset_title "$id")"
+  profile_apply
+  pause
+}
+
+mod_profile_manual() {
+  header "Профиль вручную"
+  info "С каких значений начать? (дальше на каждый вопрос можно ответить своим)"
+  menu_item 1 "$(profile_preset_title node-full)"
+  menu_item 2 "$(profile_preset_title minimal)"
+  menu_item 3 "$(profile_preset_title hardened)"
+  menu_item 4 "С нуля (всё выключено)"
+  menu_item 0 "Назад"
+  echo; read_choice
+  case $CHOICE in
+    1) profile_load_preset node-full ;;
+    2) profile_load_preset minimal ;;
+    3) profile_load_preset hardened ;;
+    4) profile_reset ;;
+    *) return 0 ;;
+  esac
+  header "Профиль вручную: вопросы"
+  profile_questionnaire
+  profile_plan
+  header "Профиль вручную: итог"
+  if (( ${#PLAN_IDS[@]} == 0 )); then warn "Ничего не выбрано."; pause; return 0; fi
+  local i
+  for i in "${!PLAN_IDS[@]}"; do printf '    %2d. %s\n' "$((i + 1))" "${PLAN_TITLES[$i]}"; done
+  echo
+  menu_item 1 "Применить сейчас"
+  menu_item 2 "Сохранить как профиль"
+  menu_item 3 "Применить и сохранить"
+  menu_item 0 "Отмена"
+  echo; read_choice
+  case $CHOICE in
+    1) profile_apply ;;
+    2) profile_save ;;
+    3) profile_save && profile_apply ;;
+    *) info "Отменено." ;;
+  esac
+  pause
+}
+
+mod_profile_saved() {
+  header "Сохранённые профили"
+  local -a files=()
+  local i=0 f
+  mapfile -t files < <(find "$PROFILE_DIR" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | sort)
+  if (( ${#files[@]} == 0 )); then
+    info "Сохранённых профилей пока нет (создай: «Настроить вручную» → «Сохранить»)."
+    pause; return 0
+  fi
+  for f in "${files[@]}"; do i=$((i + 1)); printf '  %2d  %s\n' "$i" "$(basename "$f" .conf)"; done
+  ask_re "Номер профиля (Enter — отмена)" "" '^[0-9]*$' "Нужен номер из списка."
+  [[ -z $ASK_RESULT ]] && return 0
+  if (( 10#$ASK_RESULT < 1 || 10#$ASK_RESULT > ${#files[@]} )); then err "Нет такого номера."; pause; return 1; fi
+  f="${files[$((10#$ASK_RESULT - 1))]}"
+  echo
+  menu_item 1 "Применить"
+  menu_item 2 "Показать содержимое"
+  menu_item 3 "Удалить"
+  menu_item 0 "Назад"
+  echo; read_choice
+  case $CHOICE in
+    1)
+      if profile_parse <"$f"; then header "Профиль: $(basename "$f" .conf)"; profile_apply; else err "В профиле есть ошибки."; fi
+      pause ;;
+    2) sed 's/^/  /' "$f" | show_paged; pause ;;
+    3) if confirm "Удалить профиль $(basename "$f" .conf)?" N; then rm -f "$f"; ok "Удалён."; fi; pause ;;
+    *) return 0 ;;
+  esac
+}
+
+mod_profile_download() {
+  header "Профили: скачать из GitHub"
+  if ! update_repo_ok; then
+    warn "GitHub-репозиторий не задан."
+    update_configure_repo || { pause; return 1; }
+  fi
+  info "Источник: github.com/$(update_repo) (ветка $(update_branch)), папка profiles/"
+  ask_re "Имя профиля (файл profiles/<имя>.conf, Enter — отмена)" "" '^$|^[a-z0-9][a-z0-9_-]{0,30}$' "Допустимо: a-z, 0-9, - и _."
+  local name=$ASK_RESULT
+  [[ -z $name ]] && return 0
+  ensure_curl || { pause; return 1; }
+  local tmp
+  tmp="$(mktemp)"
+  if ! curl -fsSL --connect-timeout 10 --max-time 30 -o "$tmp" "$(update_url "profiles/$name.conf")"; then
+    err "Не удалось скачать profiles/$name.conf (проверь имя и что файл есть в репозитории)."
+    rm -f "$tmp"; pause; return 1
+  fi
+  if ! profile_parse <"$tmp"; then
+    err "Профиль содержит ошибки — не сохраняю."
+    rm -f "$tmp"; pause; return 1
+  fi
+  ok "Профиль прочитан и проверен."
+  profile_plan
+  local i
+  for i in "${!PLAN_IDS[@]}"; do printf '    %2d. %s\n' "$((i + 1))" "${PLAN_TITLES[$i]}"; done
+  echo
+  install -d -m 0700 "$PROFILE_DIR"
+  if confirm "Сохранить локально как '$name'?" Y; then
+    install -m 0600 "$tmp" "$PROFILE_DIR/$name.conf" && ok "Сохранено: $PROFILE_DIR/$name.conf"
+  fi
+  if confirm "Применить сейчас?" N; then header "Профиль: $name"; profile_apply; fi
+  rm -f "$tmp"
+  pause
+}
+
+menu_profiles() {
+  while true; do
+    header "13. Профили серверов"
+    hint "Профиль — набор ответов для настройки нового сервера: применяется почти без вопросов."
+    echo
+    menu_item 1 "Применить готовый профиль"
+    menu_item 2 "Настроить вручную (с вопросами), применить и/или сохранить"
+    menu_item 3 "Сохранённые профили"
+    menu_item 4 "Скачать профиль из GitHub (profiles/<имя>.conf)"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) mod_profile_preset ;;
+      2) mod_profile_manual ;;
+      3) mod_profile_saved ;;
+      4) mod_profile_download ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+
 # ══════════════════════════ Главное меню ══════════════════════════
 main_menu() {
   while true; do
@@ -2563,6 +3603,8 @@ main_menu() {
     menu_item 10 "Мастер быстрой настройки"
     menu_item 11 "Обзор системы"
     menu_item 12 "Сам скрипт (обновление, установка)"
+    menu_item 13 "Профили серверов"
+    menu_item 14 "Диагностика сети (speedtest, ping)"
     menu_item 0 "Выход"
     echo; read_choice
     case $CHOICE in
@@ -2578,6 +3620,8 @@ main_menu() {
       10) mod_wizard ;;
       11) mod_overview ;;
       12) menu_self ;;
+      13) menu_profiles ;;
+      14) menu_net ;;
       0|q|Q) echo; ok "Пока!"; exit 0 ;;
       *)  warn "Нет такого пункта."; sleep 1 ;;
     esac
@@ -2586,8 +3630,9 @@ main_menu() {
 
 main() {
   case "${1:-}" in
-    --install) self_install; exit $? ;;
-    --update)  check_os; mod_update; exit 0 ;;
+    --install)  self_install; exit $? ;;
+    --update)   check_os; mod_update; exit 0 ;;
+    --watchdog) watchdog_run; exit $? ;;
   esac
   check_os
   log INFO "Запуск ${APP_NAME} ${APP_VERSION} (${SUDO_USER:-root})"
