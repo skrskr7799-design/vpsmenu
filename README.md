@@ -11,6 +11,8 @@ apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.gith
 ```
 
 Под обычным пользователем с sudo добавь `sudo` перед `apt-get`, `curl` и `chmod`. Дальше запуск из любого места: `vpsmenu`.
+sudo apt-get update -qq && sudo apt-get install -y -qq curl && sudo curl -fsSL https://raw.githubusercontent.com/ТВОЙ_НИК/vpsmenu/main/vpsmenu.sh -o /usr/local/bin/vpsmenu && sudo chmod +x /usr/local/bin/vpsmenu && vpsmenu
+
 
 Перед публикацией впиши репозиторий в начало `vpsmenu.sh`:
 
