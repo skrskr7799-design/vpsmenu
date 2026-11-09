@@ -116,6 +116,7 @@ dash_services() {
       if (( n > 5 )); then break; fi
       printf '      %s%s%s\n' "$C_RED" "$u" "$C_RESET"
     done <<<"$failed"
+    printf '      %sразобраться: клавиша s в главном меню (Service Manager)%s\n' "$C_DIM" "$C_RESET"
   fi
 }
 
