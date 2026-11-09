@@ -18,7 +18,7 @@ declare -a UI_MENU_ITEMS=()
 declare -A MENU_TITLES=(
   [menu_ssh]="SSH" [menu_ufw]="UFW" [menu_nft]="nftables" [menu_f2b]="Fail2ban" [menu_docker]="Docker"
   [menu_remna]="Remnanode" [menu_watchdog]="Watchdog" [menu_maint]="Обслуживание" [menu_self]="Скрипт"
-  [menu_profiles]="Профили" [menu_net]="Сеть"
+  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager"
 )
 
 log()  { printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
@@ -85,8 +85,8 @@ ui_section() { # ui_section "Название" — разделитель с з�
   printf '\n  %s──%s %s%s%s %s%s%s\n' "$C_DIM" "$C_RESET" "$C_BOLD" "$t" "$C_RESET" "$C_DIM" "$(ui_rule "$n")" "$C_RESET"
 }
 
-ui_kv() { # ui_kv "Метка" "значение"
-  printf '  %s %s\n' "$(ui_pad "${C_DIM}$1${C_RESET}" 9)" "$2"
+ui_kv() { # ui_kv "Метка" "значение" [ширина метки]
+  printf '  %s %s\n' "$(ui_pad "${C_DIM}$1${C_RESET}" "${3:-9}")" "$2"
 }
 
 ui_line() { # ui_line ok|warn|bad|off "текст" — строка со значком состояния
