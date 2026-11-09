@@ -22,7 +22,7 @@ set -uo pipefail
 # ══════════════════════════ Константы и глобальные переменные ══════════════════════════
 
 readonly APP_NAME="vpsmenu"
-readonly APP_VERSION="3.1.0"
+readonly APP_VERSION="3.2.0"
 readonly INSTALL_PATH="/usr/local/bin/${APP_NAME}"
 readonly LOG_FILE="${VPSMENU_LOG_FILE:-/var/log/${APP_NAME}.log}"
 
@@ -81,6 +81,7 @@ ${APP_NAME} ${APP_VERSION} — меню настройки VPS (Ubuntu)
   ${APP_NAME} --update     обновить скрипт из GitHub
   ${APP_NAME} --watchdog   разовая проверка Remnanode (вызывается таймером systemd)
   ${APP_NAME} --dashboard  показать Dashboard один раз и выйти (работает и без терминала)
+  ${APP_NAME} --audit [quick|full]  проверка безопасности; код выхода 0 — порядок, 1 — есть высокие, 2 — критичные
   ${APP_NAME} --version    показать версию
   ${APP_NAME} --help       эта справка
 EOF
@@ -100,7 +101,7 @@ if [[ -z ${VPSMENU_SOURCE_ONLY:-} && $EUID -ne 0 ]]; then
   exit 1
 fi
 
-if [[ -z ${VPSMENU_SOURCE_ONLY:-} && ${1:-} != --install && ${1:-} != --watchdog && ${1:-} != --dashboard && ( ! -t 0 || ! -t 1 ) ]]; then
+if [[ -z ${VPSMENU_SOURCE_ONLY:-} && ${1:-} != --install && ${1:-} != --watchdog && ${1:-} != --dashboard && ${1:-} != --audit && ( ! -t 0 || ! -t 1 ) ]]; then
   echo "Скрипту нужен интерактивный терминал." >&2
   exit 1
 fi
@@ -130,7 +131,7 @@ declare -a UI_MENU_ITEMS=()
 declare -A MENU_TITLES=(
   [menu_ssh]="SSH" [menu_ufw]="UFW" [menu_nft]="nftables" [menu_f2b]="Fail2ban" [menu_docker]="Docker"
   [menu_remna]="Remnanode" [menu_watchdog]="Watchdog" [menu_maint]="Обслуживание" [menu_self]="Скрипт"
-  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager"
+  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_audit]="Security Audit"
 )
 
 log()  { printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
@@ -212,12 +213,14 @@ ui_line() { # ui_line ok|warn|bad|off "текст" — строка со зна�
   printf '  %s%s%s %s\n' "$col" "$ic" "$C_RESET" "$2"
 }
 
-ui_bar() { # ui_bar ПРОЦЕНТ [ширина] — шкала: <70% зелёная, <90% жёлтая, иначе красная
-  local pct=${1:-0} w=${2:-20} filled i col out=""
+ui_bar() { # ui_bar ПРОЦЕНТ [ширина] [good] — шкала: <70% зелёная, <90% жёлтая, иначе красная (good — наоборот: чем больше, тем лучше)
+  local pct=${1:-0} w=${2:-20} mode=${3:-} filled i col out="" level
   [[ $pct =~ ^[0-9]+$ ]] || pct=0
   if (( pct > 100 )); then pct=100; fi
   filled=$(( (pct * w + 50) / 100 ))
-  if (( pct >= 90 )); then col=$C_RED; elif (( pct >= 70 )); then col=$C_YELLOW; else col=$C_GREEN; fi
+  level=$pct
+  if [[ $mode == good ]]; then level=$(( 100 - pct )); fi
+  if (( level >= 90 )); then col=$C_RED; elif (( level >= 70 )); then col=$C_YELLOW; else col=$C_GREEN; fi
   out+="$col"
   for (( i = 0; i < filled; i++ )); do out+="█"; done
   out+="$C_DIM"
@@ -3986,7 +3989,7 @@ dash_security_refresh() { # тяжёлые проверки — результа
 }
 
 dash_security() { # dash_security [force]
-  local force=${1:-0} now who_n who_list
+  local force=${1:-0} now who_n who_list lastaudit
   now="$(date +%s)"
   ui_section "Безопасность"
   if (( force )) || (( now - DASH_CACHE_TS > 120 )); then
@@ -3998,6 +4001,10 @@ dash_security() { # dash_security [force]
   who_n="$(who 2>/dev/null | wc -l)"
   who_list="$(who 2>/dev/null | awk '{ip = $NF; gsub(/[()]/, "", ip); printf "%s%s  ", $1, (ip != $2 && ip != "" ? "@" ip : "")}')"
   ui_kv "Сессии" "$who_n ${C_DIM}${who_list}${C_RESET}"
+  lastaudit="$(audit_last_line)"
+  if [[ -n $lastaudit ]]; then
+    ui_kv "Аудит" "$(badge "${lastaudit%%|*}" "${lastaudit#*|}")  ${C_DIM}(клавиша a в главном меню)${C_RESET}"
+  fi
 
   if [[ -n $DASH_SSH_FAILED ]]; then
     if (( DASH_SSH_FAILED == 0 )); then
@@ -5390,6 +5397,7 @@ main_menu() {
     fi
     menu_item d "Dashboard — состояние сервера"
     menu_item s "Service Manager — службы systemd"
+    menu_item a "Security Audit — проверка безопасности"
     echo
     menu_item 1 "Пользователь с sudo"
     menu_item 2 "SSH: root, ключи, порт"
@@ -5410,6 +5418,7 @@ main_menu() {
     case $CHOICE in
       d|D|в|В) mod_dashboard ;;
       s|S|ы|Ы) menu_services ;;
+      a|A|ф|Ф) menu_audit ;;
       1)  mod_user ;;
       2)  menu_ssh ;;
       3)  menu_ufw ;;
@@ -5436,6 +5445,7 @@ main() {
     --update)   check_os; mod_update; exit 0 ;;
     --watchdog) watchdog_run; exit $? ;;
     --dashboard) os_pretty_init; dash_render 1; exit 0 ;;
+    --audit)    os_pretty_init; audit_cli "${2:-quick}"; exit $? ;;
   esac
   check_os
   log INFO "Запуск ${APP_NAME} ${APP_VERSION} (${SUDO_USER:-root})"
