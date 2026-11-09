@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Заглушка journalctl для автотестов
+for i in 1 2 3 4 5; do echo "Nov 08 10:00:0$i host unit[100]: sample log line $i"; done

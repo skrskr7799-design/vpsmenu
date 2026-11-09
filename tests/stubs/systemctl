@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Заглушка systemctl для автотестов: фиксированный набор служб. Действия пишутся в $STUB_LOG.
+UNIT_FILES='ssh.service enabled enabled
+docker.service enabled enabled
+nginx.service enabled enabled
+cron.service enabled enabled
+rsyslog.service enabled enabled
+fail2ban.service enabled enabled
+ufw.service enabled enabled
+unattended-upgrades.service enabled enabled
+snapd.service enabled enabled
+broken.service enabled enabled
+foo.service disabled enabled
+bar.service static -
+masked-thing.service masked enabled
+cloud-init.service enabled enabled
+getty@.service enabled enabled
+alias-thing.service alias -'
+UNITS='ssh.service loaded active running OpenBSD Secure Shell server
+docker.service loaded active running Docker Application Container Engine
+nginx.service loaded active running A high performance web server
+cron.service loaded active running Regular background program processing daemon
+rsyslog.service loaded active running System Logging Service
+fail2ban.service loaded active running Fail2Ban Service
+ufw.service loaded active exited Uncomplicated firewall
+unattended-upgrades.service loaded active running Unattended Upgrades Shutdown
+snapd.service loaded failed failed Snap Daemon
+broken.service loaded failed failed Broken demo service
+cloud-init.service loaded active exited Initial cloud-init job
+ghost.service not-found inactive dead ghost.service
+user@1000.service loaded active running User Manager for UID 1000'
+
+field() { # field ЮНИТ НОМЕР_ПОЛЯ(3=active,4=sub) из UNITS
+  awk -v u="$1" -v n="$2" '$1 == u {print $n}' <<<"$UNITS"
+}
+filestate() { awk -v u="$1" '$1 == u {print $2}' <<<"$UNIT_FILES"; }
+
+case "$1" in
+  list-unit-files) printf '%s\n' "$UNIT_FILES" ;;
+  list-units)
+    if [[ "$*" == *"--state=running"* ]]; then awk '$4 == "running"' <<<"$UNITS"; else printf '%s\n' "$UNITS"; fi ;;
+  --failed) awk '$3 == "failed" {print $1, $2, $3, $4}' <<<"$UNITS" ;;
+  is-system-running) echo degraded; exit 1 ;;
+  is-active) a="$(field "$2" 3)"; echo "${a:-inactive}"; [[ $a == active ]] ;;
+  is-enabled) s="$(filestate "$2")"; echo "${s:-static}"; [[ $s == enabled* ]] ;;
+  show)
+    unit=$2
+    if [[ "$*" == *"--value"* ]]; then s="$(filestate "$unit")"; echo "${s:-static}"; exit 0; fi
+    a="$(field "$unit" 3)"; b="$(field "$unit" 4)"; s="$(filestate "$unit")"
+    desc="$(awk -v u="$unit" '$1 == u {$1=$2=$3=$4=""; sub(/^ +/, ""); print}' <<<"$UNITS")"
+    pid=0; mem="[not set]"; if [[ $b == running ]]; then pid=1234; mem=52428800; fi
+    nr=0; [[ $unit == broken.service ]] && nr=3
+    printf 'Description=%s\nLoadState=loaded\nActiveState=%s\nSubState=%s\nUnitFileState=%s\nMainPID=%s\nMemoryCurrent=%s\n' \
+      "$desc" "${a:-inactive}" "${b:-dead}" "${s:-static}" "$pid" "$mem"
+    printf 'ActiveEnterTimestamp=Sat 2026-11-08 10:00:00 UTC\nNRestarts=%s\nFragmentPath=/usr/lib/systemd/system/%s\nRestart=on-failure\n' "$nr" "$unit" ;;
+  status) echo "● $2 - stub status output"; echo "     Active: $(field "$2" 3) ($(field "$2" 4))" ;;
+  start|stop|restart|enable|disable|mask|unmask|reload)
+    echo "$*" >>"${STUB_LOG:-/dev/null}"
+    if [[ $2 == broken.service && $1 == start ]]; then echo "Job for broken.service failed because the control process exited with error code." >&2; exit 1; fi
+    exit 0 ;;
+  reset-failed|daemon-reload) echo "$*" >>"${STUB_LOG:-/dev/null}"; exit 0 ;;
+  *) exit 0 ;;
+esac
