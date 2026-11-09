@@ -5,21 +5,27 @@ on:
   pull_request:
 
 jobs:
-  shellcheck:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Собранный vpsmenu.sh соответствует src/
+        run: bash build.sh --check
 
       - name: Проверка синтаксиса
         run: bash -n vpsmenu.sh
 
       - name: ShellCheck
-        run: shellcheck -S warning vpsmenu.sh
+        run: shellcheck -S warning vpsmenu.sh build.sh tests/unit.sh
+
+      - name: Автотесты
+        run: bash tests/unit.sh
 
       - name: Репозиторий для самообновления заполнен
         run: |
           if grep -q 'DEFAULT_REPO="CHANGE_ME' vpsmenu.sh; then
-            echo "В vpsmenu.sh не заменён CHANGE_ME в DEFAULT_REPO (впиши ник/репозиторий)"; exit 1
+            echo "В src/10-constants.sh не заменён CHANGE_ME в DEFAULT_REPO (впиши ник/репозиторий)"; exit 1
           fi
 
       - name: Версия в файле совпадает с CHANGELOG
