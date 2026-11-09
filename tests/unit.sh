@@ -24,7 +24,7 @@ no()   { if "$@" >/dev/null 2>&1; then bad_ "должно отказать: $*";
 # версии
 yes version_gt 2.0.1 2.0.0; yes version_gt 2.10.0 2.9.9; yes version_gt 3.0.0 2.1.0
 no version_gt 2.0.0 2.0.0;  no version_gt 1.9 2.0.0
-eq 3.0.0 "$(script_version_of ./vpsmenu.sh)" "версия из файла"
+eq "$APP_VERSION" "$(script_version_of ./vpsmenu.sh)" "версия из файла"
 eq "22 2222 40000" "$(sorted_ports 2222 22 22 40000)" "sorted_ports"
 
 # UI-хелперы
@@ -75,6 +75,49 @@ eq "$before" "$after" "профиль сохраняется и читается
 
 # пример профиля из репозитория читается парсером
 yes profile_parse <profiles/node-full.conf
+
+# Service Manager (на заглушках systemctl и journalctl из tests/stubs)
+# заглушки копируем во временную папку и делаем исполняемыми (при загрузке через браузер GitHub права теряются)
+mkdir -p "$TMP/stubs" && cp tests/stubs/* "$TMP/stubs/" && chmod +x "$TMP/stubs/"*
+PATH="$TMP/stubs:$PATH"
+sleep() { :; }
+export STUB_LOG="$TMP/systemctl.log"
+svc_load
+eq 15 "${#SVC_NAMES[@]}" "служб загружено (без шаблонов, alias и not-found)"
+svc_build_view all;          eq 15 "${#SVC_VIEW[@]}" "фильтр all"
+eq "broken.service snapd.service" "${SVC_NAMES[${SVC_VIEW[0]}]} ${SVC_NAMES[${SVC_VIEW[1]}]}" "упавшие идут первыми"
+svc_build_view running;      eq 8  "${#SVC_VIEW[@]}" "фильтр running"
+svc_build_view failed;       eq 2  "${#SVC_VIEW[@]}" "фильтр failed"
+svc_build_view inactive;     eq 5  "${#SVC_VIEW[@]}" "фильтр inactive"
+svc_build_view enabled;      eq 11 "${#SVC_VIEW[@]}" "фильтр enabled"
+svc_build_view all ssh;      eq 1  "${#SVC_VIEW[@]}" "поиск по названию"
+svc_build_view all DAEMON;   eq 2  "${#SVC_VIEW[@]}" "поиск по описанию без учёта регистра"
+svc_build_view all nothing;  eq 0  "${#SVC_VIEW[@]}" "поиск без результатов"
+yes test -n "$(svc_critical_reason ssh.service)"
+yes test -n "$(svc_critical_reason docker.service)"
+yes test -n "$(svc_critical_reason ufw.service)"
+yes test -n "$(svc_critical_reason netplan-foo.service)"
+no  test -n "$(svc_critical_reason nginx.service)"
+card="$(svc_card_render nginx.service 2>&1)"
+yes grep -q 'работает (running)' <<<"$card"
+yes grep -q '50M' <<<"$card"
+yes grep -q 'включён' <<<"$card"
+yes grep -q 'sample log line' <<<"$card"
+: >"$STUB_LOG"
+printf 'y\n' | svc_run stop nginx.service >/dev/null 2>&1
+eq "stop nginx.service" "$(tail -n 1 "$STUB_LOG")" "stop обычной службы после подтверждения"
+: >"$STUB_LOG"
+printf 'нет\n' | svc_run stop ssh.service >/dev/null 2>&1
+eq "" "$(cat "$STUB_LOG")" "stop ssh без слова «да» не выполняется"
+printf 'да\n' | svc_run stop ssh.service >/dev/null 2>&1
+eq "stop ssh.service" "$(tail -n 1 "$STUB_LOG")" "stop ssh со словом «да»"
+: >"$STUB_LOG"
+printf 'n\n' | svc_run restart docker.service >/dev/null 2>&1
+eq "" "$(cat "$STUB_LOG")" "restart критичной службы отменяется по n"
+printf 'y\n' | svc_run restart docker.service >/dev/null 2>&1
+eq "restart docker.service" "$(tail -n 1 "$STUB_LOG")" "restart критичной службы по y"
+no svc_run start broken.service
+yes svc_run start foo.service
 
 echo "Тестов пройдено: $PASS, провалено: $FAIL"
 [[ $FAIL -eq 0 ]]
