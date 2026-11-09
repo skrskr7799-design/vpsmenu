@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Заглушка docker для автотестов аудита
+case "$1 $2" in
+  "ps --format")
+    printf 'web|0.0.0.0:8080->80/tcp, :::8080->80/tcp, 127.0.0.1:9000->9000/tcp, 443/tcp\n'
+    printf 'db|5432/tcp\nproxy|[::]:3000->3000/tcp, 0.0.0.0:5353->53/udp\n' ;;
+  "ps -q") printf 'aaa111\nbbb222\n' ;;
+  inspect*|"inspect "*)
+    printf '/web|false|/var/run/docker.sock,/data,|bridge\n/db|true||host\n' ;;
+esac
+exit 0
