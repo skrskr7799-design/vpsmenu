@@ -186,7 +186,7 @@ dash_security_refresh() { # тяжёлые проверки — результа
 }
 
 dash_security() { # dash_security [force]
-  local force=${1:-0} now who_n who_list
+  local force=${1:-0} now who_n who_list lastaudit
   now="$(date +%s)"
   ui_section "Безопасность"
   if (( force )) || (( now - DASH_CACHE_TS > 120 )); then
@@ -198,6 +198,10 @@ dash_security() { # dash_security [force]
   who_n="$(who 2>/dev/null | wc -l)"
   who_list="$(who 2>/dev/null | awk '{ip = $NF; gsub(/[()]/, "", ip); printf "%s%s  ", $1, (ip != $2 && ip != "" ? "@" ip : "")}')"
   ui_kv "Сессии" "$who_n ${C_DIM}${who_list}${C_RESET}"
+  lastaudit="$(audit_last_line)"
+  if [[ -n $lastaudit ]]; then
+    ui_kv "Аудит" "$(badge "${lastaudit%%|*}" "${lastaudit#*|}")  ${C_DIM}(клавиша a в главном меню)${C_RESET}"
+  fi
 
   if [[ -n $DASH_SSH_FAILED ]]; then
     if (( DASH_SSH_FAILED == 0 )); then

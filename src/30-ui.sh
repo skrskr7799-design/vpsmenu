@@ -18,7 +18,7 @@ declare -a UI_MENU_ITEMS=()
 declare -A MENU_TITLES=(
   [menu_ssh]="SSH" [menu_ufw]="UFW" [menu_nft]="nftables" [menu_f2b]="Fail2ban" [menu_docker]="Docker"
   [menu_remna]="Remnanode" [menu_watchdog]="Watchdog" [menu_maint]="Обслуживание" [menu_self]="Скрипт"
-  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager"
+  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_audit]="Security Audit"
 )
 
 log()  { printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
@@ -100,12 +100,14 @@ ui_line() { # ui_line ok|warn|bad|off "текст" — строка со зна�
   printf '  %s%s%s %s\n' "$col" "$ic" "$C_RESET" "$2"
 }
 
-ui_bar() { # ui_bar ПРОЦЕНТ [ширина] — шкала: <70% зелёная, <90% жёлтая, иначе красная
-  local pct=${1:-0} w=${2:-20} filled i col out=""
+ui_bar() { # ui_bar ПРОЦЕНТ [ширина] [good] — шкала: <70% зелёная, <90% жёлтая, иначе красная (good — наоборот: чем больше, тем лучше)
+  local pct=${1:-0} w=${2:-20} mode=${3:-} filled i col out="" level
   [[ $pct =~ ^[0-9]+$ ]] || pct=0
   if (( pct > 100 )); then pct=100; fi
   filled=$(( (pct * w + 50) / 100 ))
-  if (( pct >= 90 )); then col=$C_RED; elif (( pct >= 70 )); then col=$C_YELLOW; else col=$C_GREEN; fi
+  level=$pct
+  if [[ $mode == good ]]; then level=$(( 100 - pct )); fi
+  if (( level >= 90 )); then col=$C_RED; elif (( level >= 70 )); then col=$C_YELLOW; else col=$C_GREEN; fi
   out+="$col"
   for (( i = 0; i < filled; i++ )); do out+="█"; done
   out+="$C_DIM"

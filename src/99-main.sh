@@ -13,6 +13,7 @@ main_menu() {
     fi
     menu_item d "Dashboard — состояние сервера"
     menu_item s "Service Manager — службы systemd"
+    menu_item a "Security Audit — проверка безопасности"
     echo
     menu_item 1 "Пользователь с sudo"
     menu_item 2 "SSH: root, ключи, порт"
@@ -33,6 +34,7 @@ main_menu() {
     case $CHOICE in
       d|D|в|В) mod_dashboard ;;
       s|S|ы|Ы) menu_services ;;
+      a|A|ф|Ф) menu_audit ;;
       1)  mod_user ;;
       2)  menu_ssh ;;
       3)  menu_ufw ;;
@@ -59,6 +61,7 @@ main() {
     --update)   check_os; mod_update; exit 0 ;;
     --watchdog) watchdog_run; exit $? ;;
     --dashboard) os_pretty_init; dash_render 1; exit 0 ;;
+    --audit)    os_pretty_init; audit_cli "${2:-quick}"; exit $? ;;
   esac
   check_os
   log INFO "Запуск ${APP_NAME} ${APP_VERSION} (${SUDO_USER:-root})"

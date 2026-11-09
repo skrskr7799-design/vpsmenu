@@ -1,7 +1,7 @@
 # ══════════════════════════ Константы и глобальные переменные ══════════════════════════
 
 readonly APP_NAME="vpsmenu"
-readonly APP_VERSION="3.1.0"
+readonly APP_VERSION="3.2.0"
 readonly INSTALL_PATH="/usr/local/bin/${APP_NAME}"
 readonly LOG_FILE="${VPSMENU_LOG_FILE:-/var/log/${APP_NAME}.log}"
 
@@ -35,7 +35,7 @@ readonly PROFILE_DIR="${VPSMENU_PROFILE_DIR:-/etc/${APP_NAME}/profiles}"
 # ── Самообновление ──────────────────────────────────────────────────────────
 # Впиши сюда свой репозиторий (ник/имя). Если оставить CHANGE_ME — скрипт спросит его при первом обновлении
 # и сохранит в /etc/vpsmenu.conf. Публичный репозиторий, файл vpsmenu.sh в корне.
-readonly DEFAULT_REPO="skrskr7799-design/vpsmenu"
+readonly DEFAULT_REPO="CHANGE_ME/vpsmenu"
 readonly DEFAULT_BRANCH="main"
 RAW_BASE="${VPSMENU_RAW_BASE:-https://raw.githubusercontent.com}"
 

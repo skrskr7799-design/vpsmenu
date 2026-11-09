@@ -10,6 +10,7 @@ ${APP_NAME} ${APP_VERSION} — меню настройки VPS (Ubuntu)
   ${APP_NAME} --update     обновить скрипт из GitHub
   ${APP_NAME} --watchdog   разовая проверка Remnanode (вызывается таймером systemd)
   ${APP_NAME} --dashboard  показать Dashboard один раз и выйти (работает и без терминала)
+  ${APP_NAME} --audit [quick|full]  проверка безопасности; код выхода 0 — порядок, 1 — есть высокие, 2 — критичные
   ${APP_NAME} --version    показать версию
   ${APP_NAME} --help       эта справка
 EOF
@@ -29,7 +30,7 @@ if [[ -z ${VPSMENU_SOURCE_ONLY:-} && $EUID -ne 0 ]]; then
   exit 1
 fi
 
-if [[ -z ${VPSMENU_SOURCE_ONLY:-} && ${1:-} != --install && ${1:-} != --watchdog && ${1:-} != --dashboard && ( ! -t 0 || ! -t 1 ) ]]; then
+if [[ -z ${VPSMENU_SOURCE_ONLY:-} && ${1:-} != --install && ${1:-} != --watchdog && ${1:-} != --dashboard && ${1:-} != --audit && ( ! -t 0 || ! -t 1 ) ]]; then
   echo "Скрипту нужен интерактивный терминал." >&2
   exit 1
 fi
