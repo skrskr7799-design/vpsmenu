@@ -12,6 +12,7 @@ main_menu() {
       hr
     fi
     menu_item d "Dashboard — состояние сервера"
+    menu_item s "Service Manager — службы systemd"
     echo
     menu_item 1 "Пользователь с sudo"
     menu_item 2 "SSH: root, ключи, порт"
@@ -31,6 +32,7 @@ main_menu() {
     echo; read_choice
     case $CHOICE in
       d|D|в|В) mod_dashboard ;;
+      s|S|ы|Ы) menu_services ;;
       1)  mod_user ;;
       2)  menu_ssh ;;
       3)  menu_ufw ;;
