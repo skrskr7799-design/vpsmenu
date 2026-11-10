@@ -22,7 +22,7 @@ set -uo pipefail
 # ══════════════════════════ Константы и глобальные переменные ══════════════════════════
 
 readonly APP_NAME="vpsmenu"
-readonly APP_VERSION="3.2.0"
+readonly APP_VERSION="3.3.0"
 readonly INSTALL_PATH="/usr/local/bin/${APP_NAME}"
 readonly LOG_FILE="${VPSMENU_LOG_FILE:-/var/log/${APP_NAME}.log}"
 
@@ -56,7 +56,7 @@ readonly PROFILE_DIR="${VPSMENU_PROFILE_DIR:-/etc/${APP_NAME}/profiles}"
 # ── Самообновление ──────────────────────────────────────────────────────────
 # Впиши сюда свой репозиторий (ник/имя). Если оставить CHANGE_ME — скрипт спросит его при первом обновлении
 # и сохранит в /etc/vpsmenu.conf. Публичный репозиторий, файл vpsmenu.sh в корне.
-readonly DEFAULT_REPO="skrskr7799-design/vpsmenu"
+readonly DEFAULT_REPO="CHANGE_ME/vpsmenu"
 readonly DEFAULT_BRANCH="main"
 RAW_BASE="${VPSMENU_RAW_BASE:-https://raw.githubusercontent.com}"
 
@@ -131,7 +131,7 @@ declare -a UI_MENU_ITEMS=()
 declare -A MENU_TITLES=(
   [menu_ssh]="SSH" [menu_ufw]="UFW" [menu_nft]="nftables" [menu_f2b]="Fail2ban" [menu_docker]="Docker"
   [menu_remna]="Remnanode" [menu_watchdog]="Watchdog" [menu_maint]="Обслуживание" [menu_self]="Скрипт"
-  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_audit]="Security Audit"
+  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_audit]="Security Audit" [menu_netbird]="NetBird"
 )
 
 log()  { printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
@@ -486,13 +486,13 @@ cmd_exists()       { command -v "$1" >/dev/null 2>&1; }
 
 is_pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'; }
 
-service_active()   { systemctl is-active --quiet "$1" 2>/dev/null; }
+service_active()   { systemctl is-active --quiet "$1" >/dev/null 2>&1; }
 
-service_enabled()  { systemctl is-enabled --quiet "$1" 2>/dev/null; }
+service_enabled()  { systemctl is-enabled --quiet "$1" >/dev/null 2>&1; }
 
 ufw_c()            { LC_ALL=C ufw "$@"; }   # вывод ufw переводится — для разбора берём английский
 
-ufw_is_active()    { cmd_exists ufw && ufw_c status 2>/dev/null | grep -q '^Status: active'; }
+ufw_is_active()    { local s; cmd_exists ufw || return 1; s="$(ufw_c status 2>/dev/null)"; grep -q '^Status: active' <<<"$s"; }   # без конвейера: grep -q при pipefail мог давать ложный отказ (SIGPIPE)
 
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 
@@ -540,7 +540,7 @@ detect_ssh_ports() {
   echo "${p:-22}"
 }
 
-user_in_sudo() { id -nG "$1" 2>/dev/null | tr ' ' '\n' | grep -qx sudo; }
+user_in_sudo() { local g; g="$(id -nG "$1" 2>/dev/null | tr ' ' '\n')"; grep -qx sudo <<<"$g"; }
 
 os_pretty_init() { # название ОС для заголовка (без вопросов)
   if [[ -r /etc/os-release ]]; then OS_PRETTY="$(. /etc/os-release; echo "${PRETTY_NAME:-Linux}")"; fi
@@ -734,7 +734,7 @@ user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
   id "$user"
   echo "  groups: $(groups "$user")"
   if user_in_sudo "$user"; then ok "'$user' состоит в группе sudo."; else err "'$user' НЕ в группе sudo."; fi
-  if sudo -l -U "$user" 2>/dev/null | grep -q 'may run the following'; then
+  if grep -q 'may run the following' <<<"$(sudo -l -U "$user" 2>/dev/null)"; then
     ok "sudoers подтверждает права sudo."
   else
     warn "sudoers не показывает прав sudo для '$user' — проверь /etc/sudoers."
@@ -1419,7 +1419,7 @@ ufw_apply() { # ufw_apply "порты SSH через пробел" ["доп. п�
   fi
   if ufw_is_active; then ok "Проверка: UFW активен."; else err "UFW не активен!"; return 1; fi
   for p in "${sshp[@]}"; do
-    if ufw_c status | grep -qE "^${p}/tcp[[:space:]]+ALLOW"; then ok "Правило для ${p}/tcp на месте."; else warn "Правило для ${p}/tcp не найдено в статусе."; fi
+    if grep -qE "^${p}/tcp[[:space:]]+ALLOW" <<<"$(ufw_c status)"; then ok "Правило для ${p}/tcp на месте."; else warn "Правило для ${p}/tcp не найдено в статусе."; fi
   done
   echo; ufw status verbose
 }
@@ -2998,14 +2998,14 @@ menu_net() {
 PROFILE_KEYS=(SYSTEM_UPDATE TIMEZONE NEW_USER COPY_ROOT_KEYS USER_SSH_KEY SSH_DISABLE_ROOT SSH_KEYS_ONLY
   UFW UFW_EXTRA_PORTS NFTABLES FAIL2BAN F2B_MAXRETRY F2B_FINDTIME F2B_BANTIME F2B_IGNOREIP
   DOCKER DOCKER_LOG_SIZE DOCKER_LOG_FILES BBR SWAP_SIZE SWAPPINESS AUTOUPDATES AUTOREBOOT
-  SPEEDTEST REMNANODE WATCHDOG WATCHDOG_AUTORESTART WARP)
+  SPEEDTEST NETBIRD REMNANODE WATCHDOG WATCHDOG_AUTORESTART WARP)
 
 declare -A PROFILE_DEF=(
   [SYSTEM_UPDATE]=0 [TIMEZONE]="" [NEW_USER]="" [COPY_ROOT_KEYS]=1 [USER_SSH_KEY]=""
   [SSH_DISABLE_ROOT]=0 [SSH_KEYS_ONLY]=0 [UFW]=0 [UFW_EXTRA_PORTS]="" [NFTABLES]=0
   [FAIL2BAN]=0 [F2B_MAXRETRY]=3 [F2B_FINDTIME]=10m [F2B_BANTIME]=2d [F2B_IGNOREIP]="127.0.0.1/8 ::1"
   [DOCKER]=0 [DOCKER_LOG_SIZE]="" [DOCKER_LOG_FILES]=3 [BBR]=0 [SWAP_SIZE]="" [SWAPPINESS]=10
-  [AUTOUPDATES]=0 [AUTOREBOOT]=0 [SPEEDTEST]=0 [REMNANODE]=0 [WATCHDOG]=0 [WATCHDOG_AUTORESTART]=0 [WARP]=0
+  [AUTOUPDATES]=0 [AUTOREBOOT]=0 [SPEEDTEST]=0 [NETBIRD]=0 [REMNANODE]=0 [WATCHDOG]=0 [WATCHDOG_AUTORESTART]=0 [WARP]=0
 )
 
 declare -A P=()
@@ -3021,7 +3021,7 @@ profile_reset() {
 profile_value_ok() { # profile_value_ok КЛЮЧ ЗНАЧЕНИЕ
   local k=$1 v=$2 re
   case $k in
-    SYSTEM_UPDATE|COPY_ROOT_KEYS|SSH_DISABLE_ROOT|SSH_KEYS_ONLY|UFW|NFTABLES|FAIL2BAN|DOCKER|BBR|AUTOUPDATES|AUTOREBOOT|SPEEDTEST|REMNANODE|WATCHDOG|WATCHDOG_AUTORESTART|WARP)
+    SYSTEM_UPDATE|COPY_ROOT_KEYS|SSH_DISABLE_ROOT|SSH_KEYS_ONLY|UFW|NFTABLES|FAIL2BAN|DOCKER|BBR|AUTOUPDATES|AUTOREBOOT|SPEEDTEST|NETBIRD|REMNANODE|WATCHDOG|WATCHDOG_AUTORESTART|WARP)
       re='^[01]$' ;;
     TIMEZONE) re='^[A-Za-z0-9_+/-]*$' ;;
     NEW_USER)
@@ -3179,6 +3179,7 @@ profile_plan() {
     profile_add autoupd "$at"
   fi
   if [[ ${P[SPEEDTEST]} == 1 ]]; then profile_add speedtest "Speedtest-cli"; fi
+  if [[ ${P[NETBIRD]} == 1 ]]; then profile_add netbird "NetBird (установка; подключение — вручную по setup-ключу)"; fi
   if [[ ${P[REMNANODE]} == 1 ]]; then profile_add remna "Remnanode (папка, compose-файл, запуск)"; fi
   if [[ ${P[WATCHDOG]} == 1 ]]; then
     local wt="Watchdog Remnanode"
@@ -3240,6 +3241,7 @@ profile_step() { # profile_step ШАГ; пункты с собственными
     swap)      swap_create_apply "${P[SWAP_SIZE]}" "${P[SWAPPINESS]}" ;;
     autoupd)   autoupdates_apply "${P[AUTOREBOOT]}" ;;
     speedtest) speedtest_install ;;
+    netbird)   nb_install_apply ;;
     remna)     mod_remna_setup; STEP_PAUSED=1 ;;
     watchdog)  watchdog_enable "${P[WATCHDOG_AUTORESTART]}" ;;
     warp)      mod_warp; STEP_PAUSED=1 ;;
@@ -3335,6 +3337,7 @@ profile_questionnaire() {
   pq_bool AUTOUPDATES "Включить автообновления безопасности?"
   if [[ ${P[AUTOUPDATES]} == 1 ]]; then pq_bool AUTOREBOOT "Разрешить ночную автоперезагрузку (04:00)?"; fi
   pq_bool SPEEDTEST "Установить speedtest-cli?"
+  pq_bool NETBIRD "Установить NetBird (приватная сеть)?"
   step "Приложения"
   pq_bool REMNANODE "Настроить Remnanode?"
   pq_bool WATCHDOG "Включить watchdog для Remnanode?"
@@ -3873,7 +3876,7 @@ dash_system() {
 }
 
 dash_network() {
-  local name state addrs a1 a2 col hidden=0 iface rx tx now dt rrx rtx rate=""
+  local name state addrs a1 a2 col hidden=0 iface rx tx now dt rrx rtx rate="" nbs
   ui_section "Сеть"
   while read -r name state addrs; do
     [[ $name == lo ]] && continue
@@ -3885,6 +3888,8 @@ dash_network() {
     ui_kv "$(ui_trunc "$name" 9)" "${col}${state}${C_RESET} ${a1:-—} ${a2:-}"
   done < <(ip -brief addr 2>/dev/null)
   if (( hidden > 0 )); then ui_kv "docker" "${C_DIM}интерфейсов контейнеров: $hidden${C_RESET}"; fi
+  nbs="$(nb_summary)"
+  if [[ ${nbs%%|*} != off ]]; then ui_kv "NetBird" "$(badge "${nbs%%|*}" "${nbs#*|}")"; fi
 
   iface="$(ip route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}')"
   if [[ -n $iface ]]; then
@@ -4740,6 +4745,25 @@ audit_check_firewall() {
   audit_issue firewall firewall high "Файрвол выключен" "Включи UFW: пункт «UFW» → «Установить / первичная настройка»" fn:mod_ufw_setup
 }
 
+audit_check_netbird() {
+  local iface p public=0 via=0
+  local -a sshp=()
+  nb_installed || return 0
+  nb_collect
+  nb_is_connected || return 0
+  iface="$(nb_iface)"
+  read -r -a sshp <<<"$(detect_ssh_ports)"
+  for p in "${sshp[@]}"; do
+    if nb_ssh_public "$p"; then public=1; fi
+    if [[ -n $iface ]] && nb_ssh_rule_present "$p" "$iface"; then via=1; fi
+  done
+  if (( ! public && via )); then
+    audit_ok netbird_ssh firewall "SSH доступен только через NetBird"
+  elif (( public )); then
+    audit_info netbird_ssh firewall "SSH открыт всему интернету, хотя NetBird подключён" "Закрой публичный SSH: NetBird → «SSH только через NetBird»"
+  fi
+}
+
 audit_check_fail2ban() {
   if cmd_exists fail2ban-client && service_active fail2ban; then
     if fail2ban-client status sshd >/dev/null 2>&1; then
@@ -4995,6 +5019,7 @@ audit_scan() { # audit_scan quick|full
   if [[ $AUD_MODE == full ]]; then audit_check_ssh_extra; fi
   audit_progress "файрвол";       audit_check_firewall
   audit_progress "fail2ban";      audit_check_fail2ban
+  if [[ $AUD_MODE == full ]]; then audit_progress "NetBird"; audit_check_netbird; fi
   audit_progress "пользователи";  audit_check_users
   if [[ $AUD_MODE == full ]]; then audit_check_sudo; fi
   audit_progress "порты";         audit_check_ports
@@ -5315,6 +5340,408 @@ menu_audit() {
   done
 }
 
+# ══════════════════════════ NetBird ══════════════════════════
+# Приватная сеть на WireGuard. Установка официальным скриптом pkgs.netbird.io, подключение по setup-ключу
+# (ключ вводится скрыто и передаётся клиенту через переменную окружения, в журнал и список процессов не попадает).
+# Главная фишка для сервера: ограничить SSH интерфейсом NetBird — двумя безопасными шагами.
+
+NETBIRD_INSTALL_URL="${VPSMENU_NETBIRD_URL:-https://pkgs.netbird.io/install.sh}"
+NB_RAW=""
+
+nb_installed() { cmd_exists netbird; }
+
+nb_version() { timeout 5 netbird version 2>/dev/null | head -n 1; }
+
+nb_service_active() { service_active netbird; }
+
+nb_collect() { NB_RAW="$(timeout 8 netbird status 2>&1)"; }
+
+nb_field() { awk -F': *' -v k="$1" '$1 == k {print $2; exit}' <<<"$NB_RAW"; }
+
+nb_is_connected() { [[ "$(nb_field Management)" == Connected* ]]; }
+
+nb_is_package() { dpkg -s netbird >/dev/null 2>&1; }
+
+nb_iface() { # имя интерфейса NetBird (обычно wt0)
+  local n
+  if ip link show wt0 >/dev/null 2>&1; then echo wt0; return 0; fi
+  n="$(ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^wt[0-9]+/ {print $2; exit}')"
+  echo "${n%%@*}"
+}
+
+nb_ip() { # адрес NetBird без маски
+  local i
+  i="$(nb_iface)"
+  [[ -n $i ]] || return 0
+  ip -4 -o addr show dev "$i" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -n 1
+}
+
+nb_valid_key() { [[ $1 =~ ^[A-Za-z0-9-]{16,80}$ ]]; }
+
+nb_valid_url() { [[ $1 =~ ^https?://[A-Za-z0-9._-]+(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$ ]]; }
+
+nb_summary() { # печатает «уровень|текст» (для Dashboard)
+  if ! nb_installed; then echo "off|не установлен"; return 0; fi
+  if ! nb_service_active; then echo "warn|установлен, служба не запущена"; return 0; fi
+  nb_collect
+  if nb_is_connected; then
+    echo "ok|подключён · $(nb_field 'NetBird IP' | cut -d/ -f1) · пиров $(nb_field 'Peers count' | awk '{print $1}')"
+  else
+    echo "warn|не подключён к сети (NetBird → «Подключить»)"
+  fi
+}
+
+# ── SSH только через NetBird ────────────────────────────────────────────────
+nb_ssh_rule_present() { # nb_ssh_rule_present ПОРТ ИНТЕРФЕЙС
+  local s
+  s="$(ufw_c status 2>/dev/null)"
+  grep -qE "^$1/tcp on $2[[:space:]]+(ALLOW|LIMIT)" <<<"$s"
+}
+
+nb_ssh_public() { # nb_ssh_public ПОРТ — доступен ли SSH-порт всем (UFW выключен или есть правило «для всех»)
+  local s
+  if ! ufw_is_active; then return 0; fi
+  if audit_ufw_allows "$1" tcp; then return 0; fi
+  s="$(ufw_c status 2>/dev/null)"
+  grep -qE '^OpenSSH[[:space:]]+(ALLOW|LIMIT)[[:space:]]+Anywhere' <<<"$s"
+}
+
+nb_ssh_step1() { # nb_ssh_step1 ИНТЕРФЕЙС IP ПОРТ…
+  local iface=$1 ip=$2 p first
+  shift 2
+  first=$1
+  for p in "$@"; do
+    if nb_ssh_rule_present "$p" "$iface"; then
+      ok "Правило для $p/tcp на интерфейсе $iface уже есть."
+    elif ufw allow in on "$iface" to any port "$p" proto tcp >/dev/null; then
+      ok "UFW: SSH $p/tcp разрешён на интерфейсе $iface"
+    else
+      err "Не удалось добавить правило для $p/tcp."; return 1
+    fi
+  done
+  echo
+  warn "Публичный SSH пока открыт. Проверь вход через NetBird в ОТДЕЛЬНОМ окне,"
+  hint "с устройства, подключённого к твоей сети NetBird:   ssh -p $first <пользователь>@$ip"
+  hint "Когда вход проходит — переходи к шагу 2."
+}
+
+nb_ssh_step2() { # nb_ssh_step2 ИНТЕРФЕЙС ПОРТ…
+  local iface=$1 p missing=0 s
+  shift
+  for p in "$@"; do
+    if ! nb_ssh_rule_present "$p" "$iface"; then err "Нет правила NetBird для $p/tcp — сначала шаг 1."; missing=1; fi
+  done
+  if (( missing )); then return 1; fi
+  echo
+  warn "После этого SSH будет доступен ТОЛЬКО через NetBird. Если NetBird отключится,"
+  hint "зайти можно будет лишь через консоль хостера. Текущие сессии не оборвутся."
+  hint "Если у хостера есть внешний файрвол — старый публичный доступ закрой и там."
+  if ! confirm_word "Вход через NetBird проверен?" "да"; then info "Отменено. Изменений не вносилось."; return 1; fi
+  for p in "$@"; do
+    ufw --force delete allow "${p}/tcp" >/dev/null 2>&1
+    ufw --force delete limit "${p}/tcp" >/dev/null 2>&1
+  done
+  s="$(ufw_c status 2>/dev/null)"
+  if grep -qE '^OpenSSH[[:space:]]' <<<"$s"; then ufw --force delete allow OpenSSH >/dev/null 2>&1; fi
+  missing=0
+  for p in "$@"; do
+    if nb_ssh_public "$p"; then warn "SSH $p/tcp всё ещё доступен всем — проверь правила: ufw status numbered"; missing=1; fi
+  done
+  if (( ! missing )); then ok "Публичный SSH закрыт. Вход — только через NetBird ($iface)."; fi
+  log INFO "SSH ограничен интерфейсом $iface"
+}
+
+nb_ssh_rollback() { # nb_ssh_rollback ПОРТ…
+  local p
+  for p in "$@"; do
+    if ufw allow "${p}/tcp" >/dev/null; then ok "UFW: SSH $p/tcp снова открыт для всех."; else err "Не удалось открыть $p/tcp."; fi
+  done
+  log INFO "Публичный SSH возвращён"
+}
+
+mod_nb_ssh() {
+  local iface ip p
+  local -a ports=()
+  header "SSH только через NetBird"
+  if ! nb_installed; then err "NetBird не установлен."; pause; return 1; fi
+  nb_collect
+  if ! nb_is_connected; then err "NetBird не подключён к сети — сначала «Подключить»."; pause; return 1; fi
+  iface="$(nb_iface)"; ip="$(nb_ip)"
+  if [[ -z $iface || -z $ip ]]; then err "Не найден интерфейс или адрес NetBird."; pause; return 1; fi
+  if ! cmd_exists ufw || ! ufw_is_active; then
+    err "UFW не включён — без файрвола ограничить SSH нельзя."
+    if confirm "Настроить UFW сейчас?" Y; then mod_ufw_setup; fi
+    if ! cmd_exists ufw || ! ufw_is_active; then return 1; fi
+  fi
+  read -r -a ports <<<"$(detect_ssh_ports)"
+  while true; do
+    header "SSH только через NetBird"
+    ui_kv "NetBird" "$iface · $ip" 11
+    for p in "${ports[@]}"; do
+      ui_kv "SSH $p" "$(nb_ssh_public "$p" && echo "${C_YELLOW}доступен всем${C_RESET}" || echo "${C_GREEN}закрыт для интернета${C_RESET}")$(nb_ssh_rule_present "$p" "$iface" && echo " · ${C_GREEN}через NetBird: да${C_RESET}" || echo " · через NetBird: нет")" 11
+    done
+    echo
+    hint "Безопасная схема: шаг 1 добавляет правило, ты проверяешь вход, шаг 2 закрывает публичный SSH."
+    echo
+    menu_item 1 "Шаг 1: разрешить SSH через NetBird (публичный доступ пока остаётся)"
+    menu_item 2 "Шаг 2: закрыть публичный SSH (оставить только NetBird)"
+    menu_item 3 "Откатить: снова открыть SSH для всех"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) nb_ssh_step1 "$iface" "$ip" "${ports[@]}"; pause ;;
+      2) nb_ssh_step2 "$iface" "${ports[@]}"; pause ;;
+      3) if confirm "Открыть SSH для всех обратно?" Y; then nb_ssh_rollback "${ports[@]}"; fi; pause ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+
+# ── Установка, подключение, обслуживание ────────────────────────────────────
+nb_install_apply() {
+  if nb_installed; then ok "NetBird уже установлен: $(nb_version)"; return 0; fi
+  ensure_curl || return 1
+  local tmp rc
+  tmp="$(mktemp)"
+  step "Скачиваю установщик NetBird"
+  if ! download "$NETBIRD_INSTALL_URL" "$tmp"; then
+    err "Не удалось скачать $NETBIRD_INSTALL_URL (проверь интернет, DNS, доступность сайта)."
+    rm -f "$tmp"; return 1
+  fi
+  ok "Скачано."
+  step "Устанавливаю NetBird"
+  sh "$tmp"; rc=$?
+  rm -f "$tmp"
+  if (( rc != 0 )) || ! nb_installed; then
+    err "Установка не удалась (код $rc). Смотри вывод выше."; return 1
+  fi
+  if ! nb_service_active; then
+    info "Служба netbird не запущена — устанавливаю и запускаю."
+    netbird service install >/dev/null 2>&1
+    netbird service start >/dev/null 2>&1
+  fi
+  ok "NetBird установлен: $(nb_version)"
+  log INFO "NetBird установлен"
+}
+
+mod_nb_install() {
+  header "NetBird: установка"
+  if nb_installed; then
+    ok "NetBird уже установлен: $(nb_version)"
+    echo "  service: $(systemctl is-active netbird 2>/dev/null) / $(systemctl is-enabled netbird 2>/dev/null)"
+    hint "Подключить к сети: пункт «Подключить к сети (setup-ключ)»."
+    pause; return 0
+  fi
+  info "Установка официальным скриптом $NETBIRD_INSTALL_URL (репозиторий NetBird через apt)."
+  confirm "Установить NetBird?" Y || { info "Отменено."; pause; return 0; }
+  if confirm "Сначала показать установочный скрипт?" N; then
+    local tmp
+    ensure_curl || { pause; return 1; }
+    tmp="$(mktemp)"
+    if download "$NETBIRD_INSTALL_URL" "$tmp"; then
+      show_paged <"$tmp"
+      confirm "Запускать?" Y || { info "Отменено."; rm -f "$tmp"; pause; return 0; }
+    fi
+    rm -f "$tmp"
+  fi
+  nb_install_apply || { pause; return 1; }
+  echo
+  hint "Дальше: «Подключить к сети (setup-ключ)». Ключ создаётся в панели NetBird: Setup Keys → Create Setup Key."
+  pause
+}
+
+mod_nb_connect() {
+  local key="" url="" rc
+  header "NetBird: подключение к сети"
+  if ! nb_installed; then err "NetBird не установлен (пункт «Установить»)."; pause; return 1; fi
+  nb_collect
+  if nb_is_connected; then
+    ok "Уже подключён: $(nb_field 'NetBird IP')"
+    confirm "Переподключить с другим ключом?" N || { pause; return 0; }
+  fi
+  hint "Setup-ключ создаётся в панели NetBird: Setup Keys → Create Setup Key. Скрипт его нигде не сохраняет."
+  if confirm "Используешь свой сервер NetBird (self-hosted)?" N; then
+    ask_re "Management URL (например https://netbird.example.com:443)" "" '^https?://.+' "Нужен адрес вида https://хост:порт."
+    url=$ASK_RESULT
+    if ! nb_valid_url "$url"; then err "Некорректный адрес Management URL."; pause; return 1; fi
+  fi
+  ui_flush_input
+  IFS= read -r -s -p "  Setup-ключ (ввод скрыт): " key || { echo; return 1; }
+  echo
+  key="$(trim "$key")"
+  if ! nb_valid_key "$key"; then
+    err "Это не похоже на setup-ключ (нужны латиница, цифры и дефисы, 16–80 символов)."
+    key=""; pause; return 1
+  fi
+  if ! nb_service_active; then
+    info "Служба netbird не запущена — запускаю."
+    netbird service install >/dev/null 2>&1
+    netbird service start >/dev/null 2>&1
+    sleep 2
+  fi
+  step "Подключаюсь (до 90 секунд)"
+  ( export NB_SETUP_KEY="$key"; if [[ -n $url ]]; then export NB_MANAGEMENT_URL="$url"; fi; exec timeout 90 netbird up )
+  rc=$?
+  key=""
+  if (( rc != 0 )); then
+    err "netbird up завершился с ошибкой (код $rc). Проверь ключ (срок, лимит использований) и адрес сервера."
+    log ERROR "netbird up: код $rc"
+    pause; return 1
+  fi
+  for _ in 1 2 3 4 5 6 7 8; do
+    nb_collect
+    nb_is_connected && break
+    sleep 1
+  done
+  if nb_is_connected; then
+    ok "Подключено. NetBird IP: $(nb_field 'NetBird IP')"
+    log INFO "NetBird подключён"
+  else
+    warn "Команда выполнена, но связь с Management ещё не установлена. Проверь: netbird status"
+  fi
+  pause
+}
+
+mod_nb_status() {
+  header "NetBird: статус"
+  if ! nb_installed; then warn "NetBird не установлен."; pause; return 0; fi
+  nb_collect
+  ui_kv "Версия" "$(nb_version)" 11
+  ui_kv "Служба" "$(systemctl is-active netbird 2>/dev/null) / автозапуск: $(systemctl is-enabled netbird 2>/dev/null)" 11
+  if nb_is_connected; then ui_kv "Сеть" "${C_GREEN}подключён${C_RESET}" 11; else ui_kv "Сеть" "${C_YELLOW}не подключён${C_RESET}" 11; fi
+  ui_kv "Management" "$(nb_field Management)" 11
+  ui_kv "Signal" "$(nb_field Signal)" 11
+  ui_kv "NetBird IP" "$(nb_field 'NetBird IP')" 11
+  ui_kv "Интерфейс" "$(nb_iface)" 11
+  ui_kv "Пиры" "$(nb_field 'Peers count')" 11
+  echo
+  if confirm "Показать подробный вывод netbird status -d?" N; then timeout 10 netbird status -d 2>&1 | show_paged; fi
+  pause
+}
+
+mod_nb_toggle() {
+  header "NetBird: отключить / подключить"
+  if ! nb_installed; then err "NetBird не установлен."; pause; return 1; fi
+  nb_collect
+  if nb_is_connected; then
+    warn "Отключение разорвёт доступ к серверу через NetBird. Если SSH закрыт для интернета — ты потеряешь доступ."
+    confirm "Отключить NetBird (netbird down)?" N || { info "Отменено."; pause; return 0; }
+    if netbird down; then ok "NetBird отключён."; else err "Не удалось выполнить netbird down."; fi
+  else
+    info "Подключаю с сохранёнными данными (netbird up)."
+    if timeout 60 netbird up; then ok "NetBird подключён."; else err "Не удалось подключиться — используй «Подключить к сети» с setup-ключом."; fi
+  fi
+  pause
+}
+
+mod_nb_update() {
+  local before after
+  header "NetBird: обновление"
+  if ! nb_installed; then err "NetBird не установлен."; pause; return 1; fi
+  before="$(nb_version)"
+  info "Сейчас: $before"
+  confirm "Обновить NetBird?" Y || { info "Отменено."; pause; return 0; }
+  if nb_is_package; then
+    apt_update_once || { pause; return 1; }
+    if ! apt_run install --only-upgrade -y -q netbird; then err "Не удалось обновить пакет netbird."; pause; return 1; fi
+    systemctl restart netbird 2>/dev/null
+  else
+    ensure_curl || { pause; return 1; }
+    local tmp
+    tmp="$(mktemp)"
+    if ! download "$NETBIRD_INSTALL_URL" "$tmp"; then err "Не удалось скачать установщик."; rm -f "$tmp"; pause; return 1; fi
+    netbird down >/dev/null 2>&1
+    sh "$tmp" --update
+    rm -f "$tmp"
+    netbird up >/dev/null 2>&1
+  fi
+  after="$(nb_version)"
+  if [[ $before == "$after" ]]; then ok "Установлена актуальная версия: $after"; else ok "Обновлено: $before → $after"; fi
+  pause
+}
+
+mod_nb_logs() {
+  header "NetBird: журнал"
+  if ! cmd_exists journalctl; then err "journalctl недоступен."; pause; return 1; fi
+  menu_item 1 "Последние 100 записей"
+  menu_item 2 "В реальном времени (Ctrl+C — выход)"
+  menu_item 0 "Назад"
+  echo; read_choice
+  case $CHOICE in
+    1) journalctl -u netbird -n 100 --no-pager 2>&1 | show_paged; pause ;;
+    2) run_interruptible journalctl -u netbird -n 50 -f; pause ;;
+  esac
+}
+
+mod_nb_uninstall() {
+  local iface p restricted=0
+  local -a sshp=()
+  header "NetBird: удаление"
+  if ! nb_installed; then warn "NetBird не установлен."; pause; return 0; fi
+  iface="$(nb_iface)"
+  read -r -a sshp <<<"$(detect_ssh_ports)"
+  if [[ -n $iface ]]; then
+    for p in "${sshp[@]}"; do
+      if nb_ssh_rule_present "$p" "$iface" && ! nb_ssh_public "$p"; then restricted=1; fi
+    done
+  fi
+  if (( restricted )); then
+    err "SSH сейчас закрыт для интернета и доступен только через NetBird."
+    hint "Удаление NetBird отрежет тебя от сервера. Сначала: NetBird → «SSH только через NetBird» → «Откатить»."
+    pause; return 1
+  fi
+  warn "NetBird будет остановлен и удалён вместе со службой."
+  confirm_word "Удалить NetBird?" "да" || { info "Отменено."; pause; return 0; }
+  netbird down >/dev/null 2>&1
+  netbird service stop >/dev/null 2>&1
+  netbird service uninstall >/dev/null 2>&1
+  if nb_is_package; then
+    apt_run remove --purge -y -q netbird || err "Не удалось удалить пакет netbird."
+  else
+    rm -f "$(command -v netbird)" && ok "Файл netbird удалён."
+  fi
+  if [[ -n $iface ]]; then
+    for p in "${sshp[@]}"; do ufw --force delete allow in on "$iface" to any port "$p" proto tcp >/dev/null 2>&1; done
+  fi
+  if confirm "Удалить ещё и данные клиента (/etc/netbird, /var/lib/netbird)?" N; then rm -rf /etc/netbird /var/lib/netbird; ok "Данные удалены."; fi
+  if nb_installed; then err "Команда netbird всё ещё найдена — проверь вручную."; else ok "NetBird удалён."; fi
+  log INFO "NetBird удалён"
+  pause
+}
+
+menu_netbird() {
+  local s
+  while true; do
+    header "NetBird"
+    s="$(nb_summary)"
+    ui_kv "Состояние" "$(badge "${s%%|*}" "${s#*|}")" 11
+    echo
+    menu_item 1 "Статус"
+    menu_item 2 "Установить"
+    menu_item 3 "Подключить к сети (setup-ключ)"
+    menu_item 4 "Отключить / подключить снова"
+    menu_item 5 "SSH только через NetBird"
+    menu_item 6 "Обновить"
+    menu_item 7 "Журнал"
+    menu_item 8 "Удалить"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) mod_nb_status ;;
+      2) mod_nb_install ;;
+      3) mod_nb_connect ;;
+      4) mod_nb_toggle ;;
+      5) mod_nb_ssh ;;
+      6) mod_nb_update ;;
+      7) mod_nb_logs ;;
+      8) mod_nb_uninstall ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+
 # ══════════════════════════ Панель статусов и обзор системы ══════════════════════════
 
 status_panel() {
@@ -5398,6 +5825,7 @@ main_menu() {
     menu_item d "Dashboard — состояние сервера"
     menu_item s "Service Manager — службы systemd"
     menu_item a "Security Audit — проверка безопасности"
+    menu_item n "NetBird — приватная сеть (VPN)"
     echo
     menu_item 1 "Пользователь с sudo"
     menu_item 2 "SSH: root, ключи, порт"
@@ -5419,6 +5847,7 @@ main_menu() {
       d|D|в|В) mod_dashboard ;;
       s|S|ы|Ы) menu_services ;;
       a|A|ф|Ф) menu_audit ;;
+      n|N|т|Т) menu_netbird ;;
       1)  mod_user ;;
       2)  menu_ssh ;;
       3)  menu_ufw ;;
