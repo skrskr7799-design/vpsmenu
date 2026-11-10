@@ -3,14 +3,14 @@
 PROFILE_KEYS=(SYSTEM_UPDATE TIMEZONE NEW_USER COPY_ROOT_KEYS USER_SSH_KEY SSH_DISABLE_ROOT SSH_KEYS_ONLY
   UFW UFW_EXTRA_PORTS NFTABLES FAIL2BAN F2B_MAXRETRY F2B_FINDTIME F2B_BANTIME F2B_IGNOREIP
   DOCKER DOCKER_LOG_SIZE DOCKER_LOG_FILES BBR SWAP_SIZE SWAPPINESS AUTOUPDATES AUTOREBOOT
-  SPEEDTEST REMNANODE WATCHDOG WATCHDOG_AUTORESTART WARP)
+  SPEEDTEST NETBIRD REMNANODE WATCHDOG WATCHDOG_AUTORESTART WARP)
 
 declare -A PROFILE_DEF=(
   [SYSTEM_UPDATE]=0 [TIMEZONE]="" [NEW_USER]="" [COPY_ROOT_KEYS]=1 [USER_SSH_KEY]=""
   [SSH_DISABLE_ROOT]=0 [SSH_KEYS_ONLY]=0 [UFW]=0 [UFW_EXTRA_PORTS]="" [NFTABLES]=0
   [FAIL2BAN]=0 [F2B_MAXRETRY]=3 [F2B_FINDTIME]=10m [F2B_BANTIME]=2d [F2B_IGNOREIP]="127.0.0.1/8 ::1"
   [DOCKER]=0 [DOCKER_LOG_SIZE]="" [DOCKER_LOG_FILES]=3 [BBR]=0 [SWAP_SIZE]="" [SWAPPINESS]=10
-  [AUTOUPDATES]=0 [AUTOREBOOT]=0 [SPEEDTEST]=0 [REMNANODE]=0 [WATCHDOG]=0 [WATCHDOG_AUTORESTART]=0 [WARP]=0
+  [AUTOUPDATES]=0 [AUTOREBOOT]=0 [SPEEDTEST]=0 [NETBIRD]=0 [REMNANODE]=0 [WATCHDOG]=0 [WATCHDOG_AUTORESTART]=0 [WARP]=0
 )
 
 declare -A P=()
@@ -26,7 +26,7 @@ profile_reset() {
 profile_value_ok() { # profile_value_ok КЛЮЧ ЗНАЧЕНИЕ
   local k=$1 v=$2 re
   case $k in
-    SYSTEM_UPDATE|COPY_ROOT_KEYS|SSH_DISABLE_ROOT|SSH_KEYS_ONLY|UFW|NFTABLES|FAIL2BAN|DOCKER|BBR|AUTOUPDATES|AUTOREBOOT|SPEEDTEST|REMNANODE|WATCHDOG|WATCHDOG_AUTORESTART|WARP)
+    SYSTEM_UPDATE|COPY_ROOT_KEYS|SSH_DISABLE_ROOT|SSH_KEYS_ONLY|UFW|NFTABLES|FAIL2BAN|DOCKER|BBR|AUTOUPDATES|AUTOREBOOT|SPEEDTEST|NETBIRD|REMNANODE|WATCHDOG|WATCHDOG_AUTORESTART|WARP)
       re='^[01]$' ;;
     TIMEZONE) re='^[A-Za-z0-9_+/-]*$' ;;
     NEW_USER)
@@ -184,6 +184,7 @@ profile_plan() {
     profile_add autoupd "$at"
   fi
   if [[ ${P[SPEEDTEST]} == 1 ]]; then profile_add speedtest "Speedtest-cli"; fi
+  if [[ ${P[NETBIRD]} == 1 ]]; then profile_add netbird "NetBird (установка; подключение — вручную по setup-ключу)"; fi
   if [[ ${P[REMNANODE]} == 1 ]]; then profile_add remna "Remnanode (папка, compose-файл, запуск)"; fi
   if [[ ${P[WATCHDOG]} == 1 ]]; then
     local wt="Watchdog Remnanode"
@@ -245,6 +246,7 @@ profile_step() { # profile_step ШАГ; пункты с собственными
     swap)      swap_create_apply "${P[SWAP_SIZE]}" "${P[SWAPPINESS]}" ;;
     autoupd)   autoupdates_apply "${P[AUTOREBOOT]}" ;;
     speedtest) speedtest_install ;;
+    netbird)   nb_install_apply ;;
     remna)     mod_remna_setup; STEP_PAUSED=1 ;;
     watchdog)  watchdog_enable "${P[WATCHDOG_AUTORESTART]}" ;;
     warp)      mod_warp; STEP_PAUSED=1 ;;
@@ -340,6 +342,7 @@ profile_questionnaire() {
   pq_bool AUTOUPDATES "Включить автообновления безопасности?"
   if [[ ${P[AUTOUPDATES]} == 1 ]]; then pq_bool AUTOREBOOT "Разрешить ночную автоперезагрузку (04:00)?"; fi
   pq_bool SPEEDTEST "Установить speedtest-cli?"
+  pq_bool NETBIRD "Установить NetBird (приватная сеть)?"
   step "Приложения"
   pq_bool REMNANODE "Настроить Remnanode?"
   pq_bool WATCHDOG "Включить watchdog для Remnanode?"

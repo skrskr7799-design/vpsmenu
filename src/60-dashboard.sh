@@ -70,7 +70,7 @@ dash_system() {
 }
 
 dash_network() {
-  local name state addrs a1 a2 col hidden=0 iface rx tx now dt rrx rtx rate=""
+  local name state addrs a1 a2 col hidden=0 iface rx tx now dt rrx rtx rate="" nbs
   ui_section "Сеть"
   while read -r name state addrs; do
     [[ $name == lo ]] && continue
@@ -82,6 +82,8 @@ dash_network() {
     ui_kv "$(ui_trunc "$name" 9)" "${col}${state}${C_RESET} ${a1:-—} ${a2:-}"
   done < <(ip -brief addr 2>/dev/null)
   if (( hidden > 0 )); then ui_kv "docker" "${C_DIM}интерфейсов контейнеров: $hidden${C_RESET}"; fi
+  nbs="$(nb_summary)"
+  if [[ ${nbs%%|*} != off ]]; then ui_kv "NetBird" "$(badge "${nbs%%|*}" "${nbs#*|}")"; fi
 
   iface="$(ip route show default 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "dev") {print $(i + 1); exit}}')"
   if [[ -n $iface ]]; then

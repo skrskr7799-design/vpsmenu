@@ -48,7 +48,7 @@ user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
   id "$user"
   echo "  groups: $(groups "$user")"
   if user_in_sudo "$user"; then ok "'$user' состоит в группе sudo."; else err "'$user' НЕ в группе sudo."; fi
-  if sudo -l -U "$user" 2>/dev/null | grep -q 'may run the following'; then
+  if grep -q 'may run the following' <<<"$(sudo -l -U "$user" 2>/dev/null)"; then
     ok "sudoers подтверждает права sudo."
   else
     warn "sudoers не показывает прав sudo для '$user' — проверь /etc/sudoers."

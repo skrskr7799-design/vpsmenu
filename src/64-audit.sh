@@ -241,6 +241,25 @@ audit_check_firewall() {
   audit_issue firewall firewall high "Файрвол выключен" "Включи UFW: пункт «UFW» → «Установить / первичная настройка»" fn:mod_ufw_setup
 }
 
+audit_check_netbird() {
+  local iface p public=0 via=0
+  local -a sshp=()
+  nb_installed || return 0
+  nb_collect
+  nb_is_connected || return 0
+  iface="$(nb_iface)"
+  read -r -a sshp <<<"$(detect_ssh_ports)"
+  for p in "${sshp[@]}"; do
+    if nb_ssh_public "$p"; then public=1; fi
+    if [[ -n $iface ]] && nb_ssh_rule_present "$p" "$iface"; then via=1; fi
+  done
+  if (( ! public && via )); then
+    audit_ok netbird_ssh firewall "SSH доступен только через NetBird"
+  elif (( public )); then
+    audit_info netbird_ssh firewall "SSH открыт всему интернету, хотя NetBird подключён" "Закрой публичный SSH: NetBird → «SSH только через NetBird»"
+  fi
+}
+
 audit_check_fail2ban() {
   if cmd_exists fail2ban-client && service_active fail2ban; then
     if fail2ban-client status sshd >/dev/null 2>&1; then
@@ -496,6 +515,7 @@ audit_scan() { # audit_scan quick|full
   if [[ $AUD_MODE == full ]]; then audit_check_ssh_extra; fi
   audit_progress "файрвол";       audit_check_firewall
   audit_progress "fail2ban";      audit_check_fail2ban
+  if [[ $AUD_MODE == full ]]; then audit_progress "NetBird"; audit_check_netbird; fi
   audit_progress "пользователи";  audit_check_users
   if [[ $AUD_MODE == full ]]; then audit_check_sudo; fi
   audit_progress "порты";         audit_check_ports

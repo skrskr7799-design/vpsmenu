@@ -153,7 +153,7 @@ ufw_apply() { # ufw_apply "порты SSH через пробел" ["доп. п�
   fi
   if ufw_is_active; then ok "Проверка: UFW активен."; else err "UFW не активен!"; return 1; fi
   for p in "${sshp[@]}"; do
-    if ufw_c status | grep -qE "^${p}/tcp[[:space:]]+ALLOW"; then ok "Правило для ${p}/tcp на месте."; else warn "Правило для ${p}/tcp не найдено в статусе."; fi
+    if grep -qE "^${p}/tcp[[:space:]]+ALLOW" <<<"$(ufw_c status)"; then ok "Правило для ${p}/tcp на месте."; else warn "Правило для ${p}/tcp не найдено в статусе."; fi
   done
   echo; ufw status verbose
 }

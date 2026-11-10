@@ -4,13 +4,13 @@ cmd_exists()       { command -v "$1" >/dev/null 2>&1; }
 
 is_pkg_installed() { dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q '^install ok installed$'; }
 
-service_active()   { systemctl is-active --quiet "$1" 2>/dev/null; }
+service_active()   { systemctl is-active --quiet "$1" >/dev/null 2>&1; }
 
-service_enabled()  { systemctl is-enabled --quiet "$1" 2>/dev/null; }
+service_enabled()  { systemctl is-enabled --quiet "$1" >/dev/null 2>&1; }
 
 ufw_c()            { LC_ALL=C ufw "$@"; }   # вывод ufw переводится — для разбора берём английский
 
-ufw_is_active()    { cmd_exists ufw && ufw_c status 2>/dev/null | grep -q '^Status: active'; }
+ufw_is_active()    { local s; cmd_exists ufw || return 1; s="$(ufw_c status 2>/dev/null)"; grep -q '^Status: active' <<<"$s"; }   # без конвейера: grep -q при pipefail мог давать ложный отказ (SIGPIPE)
 
 valid_port() { [[ $1 =~ ^[0-9]+$ ]] && (( 10#$1 >= 1 && 10#$1 <= 65535 )); }
 
@@ -58,7 +58,7 @@ detect_ssh_ports() {
   echo "${p:-22}"
 }
 
-user_in_sudo() { id -nG "$1" 2>/dev/null | tr ' ' '\n' | grep -qx sudo; }
+user_in_sudo() { local g; g="$(id -nG "$1" 2>/dev/null | tr ' ' '\n')"; grep -qx sudo <<<"$g"; }
 
 os_pretty_init() { # название ОС для заголовка (без вопросов)
   if [[ -r /etc/os-release ]]; then OS_PRETTY="$(. /etc/os-release; echo "${PRETTY_NAME:-Linux}")"; fi

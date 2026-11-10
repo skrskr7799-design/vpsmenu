@@ -14,6 +14,7 @@ main_menu() {
     menu_item d "Dashboard — состояние сервера"
     menu_item s "Service Manager — службы systemd"
     menu_item a "Security Audit — проверка безопасности"
+    menu_item n "NetBird — приватная сеть (VPN)"
     echo
     menu_item 1 "Пользователь с sudo"
     menu_item 2 "SSH: root, ключи, порт"
@@ -35,6 +36,7 @@ main_menu() {
       d|D|в|В) mod_dashboard ;;
       s|S|ы|Ы) menu_services ;;
       a|A|ф|Ф) menu_audit ;;
+      n|N|т|Т) menu_netbird ;;
       1)  mod_user ;;
       2)  menu_ssh ;;
       3)  menu_ufw ;;
