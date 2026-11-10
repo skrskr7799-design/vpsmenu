@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Заглушка ufw для автотестов: правила хранятся в $STUB_UFW_RULES в формате вывода `ufw status`
+rules="${STUB_UFW_RULES:-/tmp/stub-ufw-rules}"; touch "$rules"
+args=("$@")
+if [[ ${args[0]:-} == --force ]]; then args=("${args[@]:1}"); fi
+case "${args[0]:-}" in
+  --version) echo "ufw 0.36.2" ;;
+  status)
+    echo "Status: active"
+    if [[ ${args[1]:-} == verbose ]]; then echo "Logging: on (low)"; echo "Default: deny (incoming), allow (outgoing), disabled (routed)"; fi
+    printf '\nTo                         Action      From\n--                         ------      ----\n'
+    cat "$rules" ;;
+  allow)
+    a=("${args[@]:1}")
+    if [[ ${a[0]:-} == in && ${a[1]:-} == on ]]; then
+      echo "${a[6]}/${a[8]} on ${a[2]}              ALLOW       Anywhere" >>"$rules"
+    else
+      echo "${a[0]}              ALLOW       Anywhere" >>"$rules"
+    fi ;;
+  delete)
+    kind=${args[1]:-}; spec=${args[2]:-}
+    if [[ ${args[2]:-} == in && ${args[3]:-} == on ]]; then
+      grep -vE "^${args[8]}/${args[10]} on ${args[4]} " "$rules" >"$rules.tmp"; mv "$rules.tmp" "$rules"
+    else
+      act=ALLOW; [[ $kind == limit ]] && act=LIMIT
+      grep -vE "^${spec}( \(v6\))? +${act} " "$rules" >"$rules.tmp"; mv "$rules.tmp" "$rules"
+    fi ;;
+esac
+exit 0

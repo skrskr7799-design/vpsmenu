@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Заглушка netbird для автотестов: состояние в $STUB_NB_STATE (connected|disconnected), журнал вызовов в $STUB_NB_LOG
+st="${STUB_NB_STATE:-/tmp/stub-nb-state}"; lg="${STUB_NB_LOG:-/dev/null}"
+case "${1:-}" in
+  version) echo "0.35.2" ;;
+  status)
+    if [[ -f $st && "$(cat "$st")" == connected ]]; then
+      printf 'OS: linux/amd64\nDaemon version: 0.35.2\nCLI version: 0.35.2\nManagement: Connected\nSignal: Connected\nRelays: 2/2 Available\nFQDN: host.netbird.cloud\nNetBird IP: 100.64.0.5/16\nInterface type: Kernel\nPeers count: 2/3 Connected\n'
+    else
+      printf 'Daemon version: 0.35.2\nManagement: Disconnected\nSignal: Disconnected\nPeers count: 0/0 Connected\n'
+    fi ;;
+  up)
+    echo "up key_env=${NB_SETUP_KEY:+yes} url=${NB_MANAGEMENT_URL:-none} args=$*" >>"$lg"
+    if [[ -z ${NB_SETUP_KEY:-} && ! -f $st ]]; then echo "no key" >&2; exit 1; fi
+    echo connected >"$st" ;;
+  down) echo "down" >>"$lg"; echo disconnected >"$st" ;;
+  service) echo "service ${2:-}" >>"$lg" ;;
+esac
+exit 0
