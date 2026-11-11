@@ -686,7 +686,7 @@ reboot_prompt() {
 
 # ══════════════════════════ Пользователь с sudo ══════════════════════════
 
-mod_user() {
+mod_user_create() {
   header "1. Пользователь с правами sudo"
   ask_re "Имя нового пользователя" "" "$USERNAME_RE" \
     "Допустимо: a-z, 0-9, _ и -, начинать с буквы, до 32 символов."
@@ -722,12 +722,14 @@ user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
   fi
 
   step "Права sudo"
+  local sudo_group
+  sudo_group="$(user_sudo_group)"
   if user_in_sudo "$user"; then
-    ok "'$user' уже в группе sudo."
-  elif usermod -aG sudo "$user"; then
-    ok "'$user' добавлен в группу sudo."
+    ok "'$user' уже имеет права sudo."
+  elif usermod -aG "$sudo_group" "$user"; then
+    ok "'$user' добавлен в группу $sudo_group."
   else
-    err "Не удалось добавить в группу sudo."; return 1
+    err "Не удалось добавить в группу $sudo_group."; return 1
   fi
 
   step "Проверка"
@@ -765,6 +767,435 @@ user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
   fi
   return 0
 }
+
+# ── Управление локальными пользователями ────────────────────────────────────
+user_login_name() {
+  local name="${SUDO_USER:-}"
+  [[ -n $name ]] || name="$(who am i 2>/dev/null | awk 'NR==1 {print $1}')"
+  [[ -n $name ]] || name="$(logname 2>/dev/null || true)"
+  [[ -n $name ]] || name="$(id -un 2>/dev/null || echo root)"
+  printf '%s' "$name"
+}
+
+user_is_managed_account() {
+  local uid=$1 shell=$2
+  [[ $uid =~ ^[0-9]+$ ]] || return 1
+  (( uid >= 1000 && uid < 60000 )) || return 1
+  case $shell in */nologin|*/false|/bin/sync|/usr/bin/sync|'') return 1 ;; esac
+  return 0
+}
+
+user_sudo_status() {
+  local name=$1 groups out rc
+  groups="$(id -nG "$name" 2>/dev/null || true)"
+  case " $groups " in
+    *" sudo "*|*" wheel "*) echo yes; return 0 ;;
+  esac
+  command -v sudo >/dev/null 2>&1 || { echo unknown; return 0; }
+  out="$(LC_ALL=C sudo -n -l -U "$name" 2>/dev/null)"; rc=$?
+  if grep -E '^User .+ may run the following commands' <<<"$out" >/dev/null; then echo yes
+  elif grep -iE 'not allowed to run sudo|is not allowed to run' <<<"$out" >/dev/null; then echo no
+  elif (( rc == 0 )) && grep -E '^\s*\([^)]*\)' <<<"$out" >/dev/null; then echo yes
+  else echo unknown
+  fi
+}
+user_is_sudo_admin() { [[ $(user_sudo_status "$1") == yes ]]; }
+
+user_list_accounts() {
+  local name uid home shell sudo_state marker current
+  current="$(user_login_name)"
+  printf '  %-18s %-7s %-10s %s\n' "Пользователь" "UID" "sudo" "Домашний каталог"
+  printf '  %-18s %-7s %-10s %s\n' "------------------" "-------" "----------" "----------------"
+  while IFS=: read -r name _ uid _ _ home shell; do
+    user_is_managed_account "$uid" "$shell" || continue
+    sudo_state="$(user_sudo_status "$name")"; marker=""
+    [[ $name == "$current" ]] && marker=" ← текущий"
+    case $sudo_state in yes) sudo_state="да" ;; no) sudo_state="нет" ;; *) sudo_state="неизвестно" ;; esac
+    printf '  %-18s %-7s %-10s %s%s\n' "$name" "$uid" "$sudo_state" "$home" "$marker"
+  done < <(getent passwd)
+}
+
+user_has_active_session() {
+  local name=$1
+  who 2>/dev/null | awk -v u="$name" '$1 == u {found=1} END {exit !found}' && return 0
+  if command -v loginctl >/dev/null 2>&1; then
+    loginctl list-sessions --no-legend 2>/dev/null | awk -v u="$name" '$3 == u {found=1} END {exit !found}' && return 0
+  fi
+  return 1
+}
+
+user_delete_account() {
+  local name=$1 entry uid home shell current admin_count=0 candidate
+  local remove_home=0
+  entry="$(getent passwd "$name" 2>/dev/null)"
+  [[ -n $entry ]] || { err "Пользователь '$name' не найден."; return 1; }
+  IFS=: read -r name _ uid _ _ home shell <<<"$entry"
+  if [[ $name == root || $uid == 0 ]]; then
+    err "Удаление root и любых аккаунтов с UID 0 запрещено."; return 1
+  fi
+  if ! user_is_managed_account "$uid" "$shell"; then
+    err "Это системная или неинтерактивная учётная запись. Удаление запрещено."; return 1
+  fi
+  current="$(user_login_name)"
+  if [[ $name == "$current" || $name == "${SUDO_USER:-}" || $name == "$(id -un 2>/dev/null)" ]]; then
+    err "Нельзя удалить пользователя текущей сессии или пользователя, от имени которого запущен sudo."; return 1
+  fi
+  if user_has_active_session "$name"; then
+    err "У '$name' есть активная сессия. Заверши её вручную и повтори попытку."; return 1
+  fi
+  if ps -u "$uid" -o pid= 2>/dev/null | grep -E '[0-9]' >/dev/null; then
+    err "У '$name' ещё работают процессы. Останови их вручную и повтори попытку."; return 1
+  fi
+  while IFS=: read -r candidate _ uid _ _ _ shell; do
+    user_is_managed_account "$uid" "$shell" || continue
+    if user_is_sudo_admin "$candidate"; then admin_count=$((admin_count + 1)); fi
+  done < <(getent passwd)
+  if user_is_sudo_admin "$name" && (( admin_count <= 1 )); then
+    err "Это последний обычный пользователь с правами sudo. Сначала создай и проверь другого администратора."; return 1
+  fi
+  echo
+  warn "Будет удалена учётная запись '$name' (UID $uid)."
+  hint "Файлы вне домашнего каталога автоматически удаляться не будут."
+  if confirm "Также удалить домашний каталог $home?" N; then remove_home=1; fi
+  if ! confirm_word "Для подтверждения удаления" "УДАЛИТЬ"; then info "Удаление отменено."; return 1; fi
+  if (( remove_home )); then
+    if command -v deluser >/dev/null 2>&1; then deluser --remove-home "$name"; else userdel -r "$name"; fi
+  else
+    if command -v deluser >/dev/null 2>&1; then deluser "$name"; else userdel "$name"; fi
+  fi
+  if [[ $? -ne 0 ]]; then err "Не удалось удалить '$name'. Проверь процессы пользователя и системные ограничения."; return 1; fi
+  ok "Пользователь '$name' удалён."
+}
+
+mod_user_list() {
+  header "Пользователи сервера"
+  ui_kv "Вход" "$(user_login_name)" 10
+  ui_kv "Выполняется" "$(id -un 2>/dev/null || echo unknown)" 10
+  echo
+  user_list_accounts
+  echo
+  hint "Права sudo определяются по группам и доступным правилам sudoers."
+  pause
+}
+
+mod_user_manager() {
+  while true; do
+    header "Пользователи"
+    ui_kv "Текущий вход" "$(user_login_name)" 14
+    ui_kv "Эффективный" "$(id -un 2>/dev/null || echo unknown)" 14
+    echo
+    menu_item 1 "Создать пользователя с sudo"
+    menu_item 2 "Список пользователей и права sudo"
+    menu_item 3 "Удалить пользователя"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) mod_user_create ;;
+      2) mod_user_list ;;
+      3)
+        header "Удаление пользователя"
+        user_list_accounts
+        echo
+        ask_re "Имя пользователя для удаления (Enter — отмена)" "" '^$|^[a-z_][a-z0-9_-]{0,31}$' "Недопустимое имя пользователя."
+        if [[ -n $ASK_RESULT ]]; then user_delete_account "$ASK_RESULT"; pause; fi
+        ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+mod_user() { mod_user_manager; }
+
+# ══════════════════════════ Расширенное управление пользователями ══════════════════════════
+# Этот модуль загружается после 40-user.sh и расширяет его менеджер.
+
+user_sudo_group() {
+  if getent group sudo >/dev/null 2>&1; then printf '%s' sudo
+  elif getent group wheel >/dev/null 2>&1; then printf '%s' wheel
+  else printf '%s' sudo
+  fi
+}
+
+user_password_code() {
+  LC_ALL=C passwd -S "$1" 2>/dev/null | awk 'NR == 1 {print $2}'
+}
+user_password_status() {
+  local status
+  status="$(user_password_code "$1")"
+  case $status in
+    P) printf 'Установлен' ;;
+    L|LK) printf 'Заблокирован' ;;
+    NP) printf 'Без пароля' ;;
+    *) printf 'Неизвестно' ;;
+  esac
+}
+
+user_is_current_account() {
+  local name=$1 current effective sudo_user
+  current="$(user_login_name)"
+  effective="$(id -un 2>/dev/null || true)"
+  sudo_user="$(printenv SUDO_USER 2>/dev/null || true)"
+  [[ $name == "$current" || $name == "$effective" || ( -n $sudo_user && $name == "$sudo_user" ) ]]
+}
+
+user_admin_count() {
+  local candidate candidate_uid candidate_shell count=0
+  while IFS=: read -r candidate _ candidate_uid _ _ _ candidate_shell; do
+    user_is_managed_account "$candidate_uid" "$candidate_shell" || continue
+    if user_is_sudo_admin "$candidate"; then count=$((count + 1)); fi
+  done < <(getent passwd)
+  printf '%s' "$count"
+}
+
+user_set_sudo() {
+  local name=$1 status group groups found=0 admin_count
+  status="$(user_sudo_status "$name")"
+  groups="$(id -nG "$name" 2>/dev/null || true)"
+  if [[ $status != yes ]]; then
+    group="$(user_sudo_group)"
+    if ! getent group "$group" >/dev/null 2>&1; then err "Группа $group не найдена."; return 1; fi
+    if usermod -aG "$group" "$name"; then
+      ok "'$name' добавлен в группу $group. Новые права вступят в силу при следующем входе."
+      return 0
+    fi
+    err "Не удалось добавить '$name' в группу $group."
+    return 1
+  fi
+  admin_count="$(user_admin_count)"
+  if (( admin_count <= 1 )); then err "Нельзя забрать sudo у последнего обычного администратора."; return 1; fi
+  for group in sudo wheel; do
+    case " $groups " in
+      *" $group "*)
+        found=1
+        if ! gpasswd -d "$name" "$group"; then err "Не удалось удалить '$name' из группы $group."; return 1; fi
+        ;;
+    esac
+  done
+  if (( ! found )); then
+    warn "'$name' получает sudo не через группы. Проверь отдельные правила /etc/sudoers."
+    return 1
+  fi
+  if user_is_sudo_admin "$name"; then
+    warn "Группы sudo/wheel очищены, но у '$name' остались права через sudoers или другое правило."
+  else
+    ok "Права через группы sudo/wheel у '$name' отозваны."
+  fi
+}
+
+user_reset_password() {
+  local name=$1
+  info "Пароль вводится интерактивно командой passwd и не сохраняется скриптом."
+  if passwd "$name"; then ok "Пароль пользователя '$name' обновлён."
+  else err "Не удалось изменить пароль '$name'."; return 1
+  fi
+}
+
+user_toggle_password_lock() {
+  local name=$1 status
+  status="$(user_password_code "$name")"
+  case $status in
+    L|LK)
+      if passwd -u "$name"; then
+        status="$(user_password_code "$name")"
+        if [[ $status == NP ]]; then
+          passwd -l "$name" >/dev/null 2>&1 || true
+          err "У аккаунта нет установленного пароля. Блокировка восстановлена; сначала задай пароль."
+          return 1
+        fi
+        if [[ $status == P ]]; then ok "Парольная блокировка '$name' снята."
+        else err "Не удалось подтвердить снятие блокировки (статус: $status)."; return 1
+        fi
+      else
+        err "Не удалось разблокировать пароль. Возможно, у аккаунта нет действующего пароля."
+        return 1
+      fi
+      ;;
+    P|NP)
+      if user_is_current_account "$name"; then err "Нельзя блокировать пароль текущего пользователя."; return 1; fi
+      if passwd -l "$name"; then
+        ok "Пароль '$name' заблокирован. Вход по SSH-ключу этим действием не отключается."
+      else
+        err "Не удалось заблокировать пароль '$name'."; return 1
+      fi
+      ;;
+    *) err "Не удалось определить состояние пароля '$name' (статус: $status)."; return 1 ;;
+  esac
+}
+
+user_add_ssh_key() {
+  local name=$1 key
+  if ! declare -F ssh_addkey_apply >/dev/null 2>&1; then err "Модуль добавления SSH-ключей недоступен."; return 1; fi
+  hint "Вставь именно публичный ключ из файла .pub. Приватный ключ никогда не отправляй."
+  ask "Публичный SSH-ключ одной строкой (Enter — отмена)"
+  key=$ASK_RESULT
+  if [[ -z $key ]]; then info "Отменено."; return 0; fi
+  ssh_addkey_apply "$name" "$key"
+}
+
+user_list_accounts() {
+  local name uid home shell sudo_state password_state marker current index=0
+  current="$(user_login_name)"
+  printf '  %-3s %-16s %-6s %-7s %-15s %s\n' "#" "Пользователь" "UID" "sudo" "Пароль" "Домашний каталог"
+  printf '  %-3s %-16s %-6s %-7s %-15s %s\n' "---" "----------------" "------" "-------" "---------------" "----------------"
+  while IFS=: read -r name _ uid _ _ home shell; do
+    user_is_managed_account "$uid" "$shell" || continue
+    index=$((index + 1))
+    sudo_state="$(user_sudo_status "$name")"
+    password_state="$(user_password_status "$name")"
+    marker=""
+    [[ $name == "$current" ]] && marker=" ← текущий"
+    case $sudo_state in yes) sudo_state="да" ;; no) sudo_state="нет" ;; *) sudo_state="?" ;; esac
+    printf '  %-3s %-16s %-6s %-7s %-15s %s%s\n' "$index" "$name" "$uid" "$sudo_state" "$password_state" "$home" "$marker"
+  done < <(getent passwd)
+  (( index > 0 ))
+}
+
+user_pick_account() {
+  local title name uid home shell choice index=0 count=0
+  local -a names=()
+  USER_PICKED=""
+  title=$1
+  [[ -n $title ]] || title="Выбор пользователя"
+  header "$title"
+  while IFS=: read -r name _ uid _ _ home shell; do
+    user_is_managed_account "$uid" "$shell" || continue
+    names+=("$name")
+    count=$((count + 1))
+  done < <(getent passwd)
+  if (( count == 0 )); then warn "Обычных интерактивных пользователей не найдено."; pause; return 1; fi
+  printf '  %-3s %-18s %-8s %-15s %s\n' "#" "Пользователь" "sudo" "Пароль" "Домашний каталог"
+  printf '  %-3s %-18s %-8s %-15s %s\n' "---" "------------------" "--------" "---------------" "----------------"
+  while (( index < count )); do
+    name=${names[$index]}
+    case $(user_sudo_status "$name") in yes) choice="да" ;; no) choice="нет" ;; *) choice="?" ;; esac
+    printf '  %-3s %-18s %-8s %-15s %s\n' "$((index + 1))" "$name" "$choice" "$(user_password_status "$name")" "$(getent passwd "$name" | cut -d: -f6)"
+    index=$((index + 1))
+  done
+  echo
+  ask "Номер пользователя (Enter — отмена)"
+  choice=$ASK_RESULT
+  if [[ -z $choice ]]; then info "Отменено."; return 1; fi
+  if [[ ! $choice =~ ^[0-9]+$ ]] || (( choice < 1 || choice > count )); then err "Нет пользователя с таким номером."; return 1; fi
+  USER_PICKED=${names[$((choice - 1))]}
+}
+
+user_delete_account() {
+  local name=$1 entry uid home shell admin_count
+  local remove_home=0
+  entry="$(getent passwd "$name" 2>/dev/null)"
+  [[ -n $entry ]] || { err "Пользователь '$name' не найден."; return 1; }
+  IFS=: read -r name _ uid _ _ home shell <<<"$entry"
+  if [[ $name == root || $uid == 0 ]]; then err "Удаление root и любых аккаунтов с UID 0 запрещено."; return 1; fi
+  if ! user_is_managed_account "$uid" "$shell"; then err "Это системная или неинтерактивная учётная запись. Удаление запрещено."; return 1; fi
+  if user_is_current_account "$name"; then err "Нельзя удалить пользователя текущей сессии или пользователя, от имени которого запущен sudo."; return 1; fi
+  if user_has_active_session "$name"; then err "У '$name' есть активная сессия. Заверши её вручную и повтори попытку."; return 1; fi
+  if ps -u "$uid" -o pid= 2>/dev/null | grep -E '[0-9]' >/dev/null; then
+    err "У '$name' ещё работают процессы. Останови их вручную и повтори попытку."
+    return 1
+  fi
+  admin_count="$(user_admin_count)"
+  if user_is_sudo_admin "$name" && (( admin_count <= 1 )); then
+    err "Это последний обычный пользователь с правами sudo. Сначала создай и проверь другого администратора."
+    return 1
+  fi
+  echo
+  warn "Будет удалена учётная запись '$name' (UID $uid)."
+  hint "Файлы вне домашнего каталога автоматически удаляться не будут."
+  if confirm "Также удалить домашний каталог $home?" N; then remove_home=1; fi
+  if ! confirm_word "Для подтверждения удаления" "delete"; then info "Удаление отменено."; return 1; fi
+  if (( remove_home )); then
+    if command -v deluser >/dev/null 2>&1; then
+      if deluser --remove-home "$name"; then ok "Пользователь '$name' удалён."; else err "Не удалось удалить '$name'."; return 1; fi
+    else
+      if userdel -r "$name"; then ok "Пользователь '$name' удалён."; else err "Не удалось удалить '$name'."; return 1; fi
+    fi
+  else
+    if command -v deluser >/dev/null 2>&1; then
+      if deluser "$name"; then ok "Пользователь '$name' удалён."; else err "Не удалось удалить '$name'."; return 1; fi
+    else
+      if userdel "$name"; then ok "Пользователь '$name' удалён."; else err "Не удалось удалить '$name'."; return 1; fi
+    fi
+  fi
+}
+
+user_show_details() {
+  local name=$1 entry uid home shell sudo_state
+  entry="$(getent passwd "$name" 2>/dev/null)" || return 1
+  [[ -n $entry ]] || return 1
+  IFS=: read -r name _ uid _ _ home shell <<<"$entry"
+  sudo_state="$(user_sudo_status "$name")"
+  case $sudo_state in yes) sudo_state="Да" ;; no) sudo_state="Нет" ;; *) sudo_state="Неизвестно" ;; esac
+  ui_kv "Пользователь" "$name" 14
+  ui_kv "UID" "$uid" 14
+  ui_kv "Вход" "$(user_login_name)" 14
+  ui_kv "Выполняется" "$(id -un 2>/dev/null || echo unknown)" 14
+  ui_kv "sudo" "$sudo_state" 14
+  ui_kv "Пароль" "$(user_password_status "$name")" 14
+  ui_kv "Домашний каталог" "$home" 14
+  ui_kv "Shell" "$shell" 14
+}
+
+mod_user_list() {
+  header "Пользователи сервера"
+  ui_kv "Вход" "$(user_login_name)" 10
+  ui_kv "Выполняется" "$(id -un 2>/dev/null || echo unknown)" 10
+  echo
+  user_list_accounts || warn "Список пользователей пуст."
+  echo
+  hint "passwd -S: P — пароль установлен, L — заблокирован, NP — пароль отсутствует."
+  hint "Блокировка пароля не отключает вход по SSH-ключу."
+  pause
+}
+
+mod_user_account_menu() {
+  local name=$1 status
+  while true; do
+    header "Управление пользователем"
+    user_show_details "$name" || { err "Пользователь '$name' больше не существует."; pause; return 1; }
+    echo
+    menu_item 1 "Сбросить пароль"
+    menu_item 2 "Выдать / забрать sudo"
+    status="$(user_password_code "$name")"
+    case $status in L|LK) menu_item 3 "Разблокировать пароль" ;; *) menu_item 3 "Заблокировать пароль" ;; esac
+    menu_item 4 "Добавить SSH-ключ"
+    menu_item 5 "Удалить пользователя"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) user_reset_password "$name"; pause ;;
+      2) user_set_sudo "$name"; pause ;;
+      3) user_toggle_password_lock "$name"; pause ;;
+      4) user_add_ssh_key "$name"; pause ;;
+      5) user_delete_account "$name"; pause; return 0 ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+
+mod_user_manager() {
+  while true; do
+    header "Менеджер пользователей"
+    ui_kv "Текущий вход" "$(user_login_name)" 14
+    ui_kv "Эффективный" "$(id -un 2>/dev/null || echo unknown)" 14
+    echo
+    menu_item 1 "Создать пользователя с sudo"
+    menu_item 2 "Список пользователей"
+    menu_item 3 "Управление пользователем"
+    menu_item 4 "Удалить пользователя"
+    menu_item 0 "Назад"
+    echo; read_choice
+    case $CHOICE in
+      1) mod_user_create ;;
+      2) mod_user_list ;;
+      3) if user_pick_account "Выбор пользователя"; then mod_user_account_menu "$USER_PICKED"; fi ;;
+      4) if user_pick_account "Выбор пользователя для удаления"; then user_delete_account "$USER_PICKED"; pause; fi ;;
+      0) return 0 ;;
+      *) warn "Нет такого пункта."; sleep 1 ;;
+    esac
+  done
+}
+mod_user() { mod_user_manager; }
 
 # ══════════════════════════ SSH: root, ключи, пароль, порт ══════════════════════════
 
@@ -2847,12 +3278,29 @@ ipv6_is_disabled() { # 0 = IPv6 сейчас выключен
   [[ $v == 1 ]]
 }
 
-ipv6_has_global() { # есть ли глобальные IPv6-адреса
-  ip -6 -o addr show scope global 2>/dev/null | grep -q .
+ipv6_has_global() { # есть ли IPv6-адреса scope global (включая ULA)
+  ip -6 -o addr show scope global 2>/dev/null | grep -E . >/dev/null
 }
 
-ipv6_addrs() { # печатает глобальные IPv6 (по одному в строке)
-  ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | sed 's|/.*||'
+ipv6_addrs() { # печатает IPv6 scope global (по одному в строке)
+  ip -6 -o addr show scope global 2>/dev/null | awk '!/ tentative| dadfailed/ {print $4}' | sed 's|/.*||'
+}
+
+ipv6_has_public() { ipv6_addrs | grep -iE '^[23][0-9a-f]{0,3}:' >/dev/null; }
+ipv6_has_default_route() { ip -6 route show default 2>/dev/null | grep -E . >/dev/null; }
+ipv6_test_connectivity() {
+  ipv6_is_disabled && return 1
+  ipv6_has_public || return 1
+  ipv6_has_default_route || return 1
+  command -v curl >/dev/null 2>&1 || return 2
+  curl -6 -fsS --connect-timeout 3 --max-time 5 https://api64.ipify.org >/dev/null 2>&1
+}
+ipv6_local_state() {
+  if ipv6_is_disabled; then echo "выключен"
+  elif ipv6_has_public && ipv6_has_default_route; then echo "адрес и маршрут есть"
+  elif ipv6_has_public; then echo "адрес есть, маршрута нет"
+  elif ipv6_has_default_route; then echo "маршрут есть, публичного IPv6 нет"
+  else echo "включён, публичный IPv6 не обнаружен"; fi
 }
 
 ipv6_ufw_ipv6() { # yes|no|? — поддержка IPv6 в UFW
@@ -2863,31 +3311,37 @@ ipv6_ufw_ipv6() { # yes|no|? — поддержка IPv6 в UFW
   else echo "?"; fi
 }
 
-ipv6_status_lines() { # печатает строки статуса для меню/обзора
+ipv6_status_lines() {
   local ufw a
   if ipv6_is_disabled; then
-    printf '  %-14s %s\n' "IPv6" "$(badge ok 'выключен (sysctl)')"
+    printf '  %-14s %s\\n' "IPv6 ядро" "$(badge ok 'выключен (sysctl)')"
   else
-    printf '  %-14s %s\n' "IPv6" "$(badge warn 'включён')"
+    printf '  %-14s %s\\n' "IPv6 ядро" "$(badge warn 'включён в ядре')"
   fi
-  if [[ -f $IPV6_SYSCTL ]]; then
-    printf '  %-14s %s\n' "Файл" "$IPV6_SYSCTL"
-  else
-    printf '  %-14s %s\n' "Файл" "${C_DIM}нет (настройка не через vpsmenu)${C_RESET}"
-  fi
-  if ipv6_has_global; then
-    printf '  %-14s %s\n' "Адреса" "есть глобальные:"
+  if ipv6_has_public; then
+    printf '  %-14s %s\\n' "Публичный IP" "$(badge ok 'адрес обнаружен')"
     while read -r a; do
-      [[ -n $a ]] && printf '                 %s\n' "$a"
+      [[ $a =~ ^[23][0-9a-fA-F]{0,3}: ]] && printf '                 %s\\n' "$a"
     done < <(ipv6_addrs)
   else
-    printf '  %-14s %s\n' "Адреса" "${C_DIM}глобальных IPv6 нет${C_RESET}"
+    printf '  %-14s %s\\n' "Публичный IP" "$(badge warn 'не обнаружен')"
+  fi
+  if ipv6_has_default_route; then
+    printf '  %-14s %s\\n' "Маршрут" "$(badge ok 'IPv6 default route есть')"
+  else
+    printf '  %-14s %s\\n' "Маршрут" "$(badge warn 'IPv6 default route нет')"
+  fi
+  printf '  %-14s %s\\n' "Интернет" "${C_DIM}не проверялся — нажми «Проверить связь»${C_RESET}"
+  if [[ -f $IPV6_SYSCTL ]]; then
+    printf '  %-14s %s\\n' "Файл" "$IPV6_SYSCTL"
+  else
+    printf '  %-14s %s\\n' "Файл" "${C_DIM}нет (настройка не через vpsmenu)${C_RESET}"
   fi
   ufw="$(ipv6_ufw_ipv6)"
   case $ufw in
-    yes) printf '  %-14s %s\n' "UFW IPv6" "$(badge ok 'IPV6=yes')" ;;
-    no)  printf '  %-14s %s\n' "UFW IPv6" "$(badge warn 'IPV6=no')" ;;
-    *)   printf '  %-14s %s\n' "UFW IPv6" "${C_DIM}не определён${C_RESET}" ;;
+    yes) printf '  %-14s %s\\n' "UFW IPv6" "$(badge ok 'IPV6=yes')" ;;
+    no)  printf '  %-14s %s\\n' "UFW IPv6" "$(badge warn 'IPV6=no')" ;;
+    *)   printf '  %-14s %s\\n' "UFW IPv6" "${C_DIM}не определён${C_RESET}" ;;
   esac
 }
 
@@ -2964,7 +3418,8 @@ mod_ipv6() {
     else
       menu_item 1 "Выключить IPv6"
     fi
-    menu_item 2 "Обновить статус"
+    menu_item 2 "Обновить локальный статус"
+    menu_item 3 "Проверить связь с IPv6-интернетом"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
@@ -2986,6 +3441,24 @@ mod_ipv6() {
         fi
         ;;
       2) ;;
+      3)
+        header "Проверка IPv6-интернета"
+        if ipv6_is_disabled; then
+          warn "IPv6 выключен в ядре."
+        elif ! ipv6_has_public; then
+          warn "Не найден публичный IPv6-адрес (2000::/3)."
+        elif ! ipv6_has_default_route; then
+          warn "Не найден маршрут IPv6 по умолчанию."
+        elif ! command -v curl >/dev/null 2>&1; then
+          warn "curl не установлен — внешнюю проверку выполнить нечем."
+        elif ipv6_test_connectivity; then
+          ok "Внешнее IPv6-соединение работает."
+        else
+          warn "Не удалось подтвердить IPv6-доступ в интернет."
+          hint "Причиной могут быть DNS, маршрутизация, firewall или недоступность сервиса проверки."
+        fi
+        pause
+        ;;
       0) return 0 ;;
       *) warn "Нет такого пункта."; sleep 1 ;;
     esac
@@ -3683,7 +4156,7 @@ mod_wizard() {
   local -a steps=(
     "Обновление системы|mod_sys_update"
     "Часовой пояс и NTP|mod_timezone_ntp"
-    "Пользователь с sudo|mod_user"
+    "Пользователь с sudo|mod_user_create"
     "SSH: добавить публичный ключ|mod_ssh_addkey"
     "SSH: запрет входа под root|mod_ssh_disable_root"
     "SSH: вход только по ключам (необязательно)|mod_ssh_keys_only"
@@ -5923,9 +6396,13 @@ status_panel() {
   fi
 
   if ipv6_is_disabled; then
-    printf '  %-10s %s\n' "IPv6" "$(badge ok 'выключен')"
+    printf '  %-10s %s\\n' "IPv6" "$(badge ok 'выключен')"
+  elif ipv6_has_public && ipv6_has_default_route; then
+    printf '  %-10s %s\\n' "IPv6" "$(badge ok 'публичный адрес и маршрут есть')"
+  elif ipv6_has_public; then
+    printf '  %-10s %s\\n' "IPv6" "$(badge warn 'адрес есть, маршрута нет')"
   else
-    printf '  %-10s %s\n' "IPv6" "$(badge warn 'включён')"
+    printf '  %-10s %s\\n' "IPv6" "$(badge warn 'включён, публичный адрес не найден')"
   fi
 
   if ! cmd_exists ufw; then printf '  %-10s %s\n' "UFW" "$(badge off 'не установлен')"
@@ -5996,7 +6473,7 @@ main_menu() {
     menu_item a "Security Audit — проверка безопасности"
     menu_item n "NetBird — приватная сеть (VPN)"
     echo
-    menu_item 1 "Пользователь с sudo"
+    menu_item 1 "Пользователи"
     menu_item 2 "SSH: root, ключи, порт"
     menu_item 3 "UFW (файрвол)"
     menu_item 4 "nftables"

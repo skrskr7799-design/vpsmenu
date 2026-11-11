@@ -46,7 +46,12 @@ eq "██████████" "$(ui_bar 999 10)" "bar >100%"
 # конфиг
 conf_set GITHUB_REPO a/b; conf_set GITHUB_REPO c/d; conf_set GITHUB_BRANCH dev
 eq "c/d dev" "$(conf_get GITHUB_REPO) $(conf_get GITHUB_BRANCH)" "conf set/get"
-yes update_repo_ok; rm -f "$VPSMENU_CONF_FILE"; no update_repo_ok
+yes update_repo_ok
+rm -f "$VPSMENU_CONF_FILE"
+yes update_repo_ok
+conf_set GITHUB_REPO CHANGE_ME/repository
+no update_repo_ok
+conf_set GITHUB_REPO "$DEFAULT_REPO"
 
 # бэкапы: создание, права, ретеншн (10 последних), отказ при пустом списке
 mkdir -p "$TMP/src/sub"; echo secret >"$TMP/src/a"; echo x >"$TMP/src/sub/b"

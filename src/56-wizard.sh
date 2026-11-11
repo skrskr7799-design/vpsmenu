@@ -10,7 +10,7 @@ mod_wizard() {
   local -a steps=(
     "Обновление системы|mod_sys_update"
     "Часовой пояс и NTP|mod_timezone_ntp"
-    "Пользователь с sudo|mod_user"
+    "Пользователь с sudo|mod_user_create"
     "SSH: добавить публичный ключ|mod_ssh_addkey"
     "SSH: запрет входа под root|mod_ssh_disable_root"
     "SSH: вход только по ключам (необязательно)|mod_ssh_keys_only"

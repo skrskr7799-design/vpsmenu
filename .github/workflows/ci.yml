@@ -4,12 +4,19 @@ on:
   push:
     branches:
       - main
+      - feature/ipv6-user-manager
   pull_request:
     branches:
       - main
 
 permissions:
-  contents: read
+  contents: write
+
+# Several quick commits can otherwise start parallel jobs that race while
+# committing the generated single-file script back to the same branch.
+concurrency:
+  group: vpsmenu-ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build-and-test:
@@ -19,9 +26,23 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Check generated build
-        run: bash build.sh --check
+      - name: Build generated script and sync it on push
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            git fetch origin "${GITHUB_REF_NAME}"
+            git reset --hard "origin/${GITHUB_REF_NAME}"
+          fi
+          bash build.sh
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]] && ! git diff --quiet -- vpsmenu.sh; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add vpsmenu.sh
+            git commit -m "build: regenerate vpsmenu.sh from src"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
 
       - name: Run tests
         run: bash tests/run.sh
