@@ -87,8 +87,19 @@ user_toggle_password_lock() {
   status="$(user_password_code "$name")"
   case $status in
     L|LK)
-      if passwd -u "$name"; then ok "Парольная блокировка '$name' снята."
-      else err "Не удалось разблокировать пароль. Возможно, у аккаунта нет действующего пароля."; return 1
+      if passwd -u "$name"; then
+        status="$(user_password_code "$name")"
+        if [[ $status == NP ]]; then
+          passwd -l "$name" >/dev/null 2>&1 || true
+          err "У аккаунта нет установленного пароля. Блокировка восстановлена; сначала задай пароль."
+          return 1
+        fi
+        if [[ $status == P ]]; then ok "Парольная блокировка '$name' снята."
+        else err "Не удалось подтвердить снятие блокировки (статус: $status)."; return 1
+        fi
+      else
+        err "Не удалось разблокировать пароль. Возможно, у аккаунта нет действующего пароля."
+        return 1
       fi
       ;;
     P|NP)
