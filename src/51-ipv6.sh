@@ -59,7 +59,7 @@ ipv6_status_lines() { # печатает строки статуса для ме
 }
 
 ipv6_disable_apply() {
-  local virt
+  local virt old_all old_default
   virt="$(systemd-detect-virt 2>/dev/null || true)"
   if [[ $virt == openvz || $virt == lxc* ]]; then
     warn "Виртуализация: $virt — sysctl IPv6 в контейнере может не применяться."
@@ -68,36 +68,45 @@ ipv6_disable_apply() {
     ok "IPv6 уже выключен через $IPV6_SYSCTL."
     return 0
   fi
+  old_all="$(ipv6_sysctl_val net.ipv6.conf.all.disable_ipv6)"
+  old_default="$(ipv6_sysctl_val net.ipv6.conf.default.disable_ipv6)"
   printf '# Создано %s — отключение IPv6\nnet.ipv6.conf.all.disable_ipv6 = 1\nnet.ipv6.conf.default.disable_ipv6 = 1\n' \
     "$APP_NAME" >"$IPV6_SYSCTL"
-  if ! sysctl -p "$IPV6_SYSCTL" >/dev/null 2>&1; then
-    err "Не удалось применить sysctl."; return 1
-  fi
-  if ipv6_is_disabled; then
-    ok "IPv6 выключен (net.ipv6.conf.all.disable_ipv6=1)."
-    if ipv6_has_global; then
-      warn "Глобальные IPv6-адреса ещё видны — полный эффект после перезагрузки."
-      hint "Перезагрузка снимет уже выданные адреса. Без неё новые соединения по IPv6 уже не поднимутся."
-    fi
-  else
-    err "sysctl применился, но disable_ipv6 всё ещё не 1. Проверь: sysctl net.ipv6.conf.all.disable_ipv6"
+  if ! sysctl -p "$IPV6_SYSCTL" >/dev/null 2>&1 || ! ipv6_is_disabled; then
+    rm -f "$IPV6_SYSCTL"
+    [[ $old_all =~ ^[01]$ ]] && sysctl -w "net.ipv6.conf.all.disable_ipv6=$old_all" >/dev/null 2>&1 || true
+    [[ $old_default =~ ^[01]$ ]] && sysctl -w "net.ipv6.conf.default.disable_ipv6=$old_default" >/dev/null 2>&1 || true
+    err "Не удалось отключить IPv6. Настройка отменена, исходные значения восстановлены."
     return 1
+  fi
+  ok "IPv6 выключен (net.ipv6.conf.all.disable_ipv6=1)."
+  if ipv6_has_global; then
+    warn "Глобальные IPv6-адреса ещё видны — полный эффект после перезагрузки."
+    hint "Перезагрузка снимет уже выданные адреса. Без неё новые соединения по IPv6 уже не поднимутся."
   fi
   return 0
 }
 
 ipv6_enable_apply() {
+  local ufw_state
+  if cmd_exists ufw && ufw_is_active; then
+    ufw_state="$(ipv6_ufw_ipv6)"
+    if [[ $ufw_state != yes ]]; then
+      err "IPv6 не включён: UFW активен, но поддержка IPv6 не подтверждена (IPV6=${ufw_state})."
+      hint "Сначала настрой IPV6=yes в /etc/default/ufw, проверь правила IPv6 и перезагрузи UFW."
+      return 1
+    fi
+  fi
   if [[ -f $IPV6_SYSCTL ]]; then
-    rm -f "$IPV6_SYSCTL"
+    rm -f "$IPV6_SYSCTL" || { err "Не удалось удалить $IPV6_SYSCTL."; return 1; }
     ok "Удалён $IPV6_SYSCTL."
   fi
-  if sysctl -w net.ipv6.conf.all.disable_ipv6=0 net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1; then
-    ok "IPv6 включён в текущей сессии."
-  else
+  if ! sysctl -w net.ipv6.conf.all.disable_ipv6=0 net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1; then
     warn "Не удалось выставить sysctl в 0 (возможно, права или контейнер)."
+    return 1
   fi
   if ipv6_is_disabled; then
-    warn "IPv6 всё ещё отключён. Возможно, его глушит другой файл в /etc/sysctl.d/."
+    warn "IPv6 всё ещё отключён. Возможно, его глушит другой файл в /etc/sysctl.d/ или параметр ядра."
     hint "Проверь: grep -r disable_ipv6 /etc/sysctl.conf /etc/sysctl.d/ 2>/dev/null"
     return 1
   fi
