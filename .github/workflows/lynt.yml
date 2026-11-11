@@ -10,14 +10,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Собранный vpsmenu.sh соответствует src/
+      - name: Собрать vpsmenu.sh из исходников\n        run: bash build.sh\n\n      - name: Собранный vpsmenu.sh соответствует src/
         run: bash build.sh --check
 
       - name: Проверка синтаксиса
         run: bash -n vpsmenu.sh
 
       - name: ShellCheck
-        run: shellcheck -S warning vpsmenu.sh build.sh tests/unit.sh
+        run: shellcheck -S warning vpsmenu.sh build.sh tests/unit.sh tests/ipv6.sh tests/users.sh
 
       - name: Автотесты
         run: bash tests/unit.sh
