@@ -722,12 +722,14 @@ user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
   fi
 
   step "Права sudo"
+  local sudo_group
+  sudo_group="$(user_sudo_group)"
   if user_in_sudo "$user"; then
-    ok "'$user' уже в группе sudo."
-  elif usermod -aG sudo "$user"; then
-    ok "'$user' добавлен в группу sudo."
+    ok "'$user' уже имеет права sudo."
+  elif usermod -aG "$sudo_group" "$user"; then
+    ok "'$user' добавлен в группу $sudo_group."
   else
-    err "Не удалось добавить в группу sudo."; return 1
+    err "Не удалось добавить в группу $sudo_group."; return 1
   fi
 
   step "Проверка"
@@ -993,8 +995,19 @@ user_toggle_password_lock() {
   status="$(user_password_code "$name")"
   case $status in
     L|LK)
-      if passwd -u "$name"; then ok "Парольная блокировка '$name' снята."
-      else err "Не удалось разблокировать пароль. Возможно, у аккаунта нет действующего пароля."; return 1
+      if passwd -u "$name"; then
+        status="$(user_password_code "$name")"
+        if [[ $status == NP ]]; then
+          passwd -l "$name" >/dev/null 2>&1 || true
+          err "У аккаунта нет установленного пароля. Блокировка восстановлена; сначала задай пароль."
+          return 1
+        fi
+        if [[ $status == P ]]; then ok "Парольная блокировка '$name' снята."
+        else err "Не удалось подтвердить снятие блокировки (статус: $status)."; return 1
+        fi
+      else
+        err "Не удалось разблокировать пароль. Возможно, у аккаунта нет действующего пароля."
+        return 1
       fi
       ;;
     P|NP)
