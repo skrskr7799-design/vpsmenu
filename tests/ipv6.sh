@@ -74,6 +74,6 @@ IPV6_ADDR=fd00::1
 if ipv6_has_public; then fail "ULA must not be treated as public IPv6"; fi
 IPV6_ADDR=2001:db8::1; IPV6_ROUTE=0
 if ipv6_test_connectivity; then fail "external probe must not run without default route"; fi
-pass "IPv6 address, route and connectivity diagnostics"
+echo "IPv6 diagnostics: OK"
 
 echo "IPv6 tests: OK"
