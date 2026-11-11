@@ -823,11 +823,11 @@ user_has_active_session() {
 }
 
 user_delete_account() {
-  local name=$1 entry uid gid gecos home shell current admin_count=0 candidate
+  local name=$1 entry uid home shell current admin_count=0 candidate
   local remove_home=0
   entry="$(getent passwd "$name" 2>/dev/null)"
   [[ -n $entry ]] || { err "Пользователь '$name' не найден."; return 1; }
-  IFS=: read -r name _ uid gid gecos home shell <<<"$entry"
+  IFS=: read -r name _ uid _ _ home shell <<<"$entry"
   if [[ $name == root || $uid == 0 ]]; then
     err "Удаление root и любых аккаунтов с UID 0 запрещено."; return 1
   fi
@@ -844,7 +844,7 @@ user_delete_account() {
   if ps -u "$uid" -o pid= 2>/dev/null | grep -E '[0-9]' >/dev/null; then
     err "У '$name' ещё работают процессы. Останови их вручную и повтори попытку."; return 1
   fi
-  while IFS=: read -r candidate _ uid gid gecos home shell; do
+  while IFS=: read -r candidate _ uid _ _ _ shell; do
     user_is_managed_account "$uid" "$shell" || continue
     if user_is_sudo_admin "$candidate"; then admin_count=$((admin_count + 1)); fi
   done < <(getent passwd)
