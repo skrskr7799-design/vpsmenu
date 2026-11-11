@@ -154,6 +154,9 @@ user_delete_account() {
   if user_has_active_session "$name"; then
     err "У '$name' есть активная сессия. Заверши её вручную и повтори попытку."; return 1
   fi
+  if ps -u "$uid" -o pid= 2>/dev/null | grep -q '[0-9]'; then
+    err "У '$name' ещё работают процессы. Останови их вручную и повтори попытку."; return 1
+  fi
   while IFS=: read -r candidate _ uid gid gecos home shell; do
     user_is_managed_account "$uid" "$shell" || continue
     if user_is_sudo_admin "$candidate"; then admin_count=$((admin_count + 1)); fi
