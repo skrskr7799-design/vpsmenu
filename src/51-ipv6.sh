@@ -15,15 +15,15 @@ ipv6_is_disabled() { # 0 = IPv6 сейчас выключен
 }
 
 ipv6_has_global() { # есть ли IPv6-адреса scope global (включая ULA)
-  ip -6 -o addr show scope global 2>/dev/null | grep -q .
+  ip -6 -o addr show scope global 2>/dev/null | grep -E . >/dev/null
 }
 
 ipv6_addrs() { # печатает IPv6 scope global (по одному в строке)
-  ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | sed 's|/.*||'
+  ip -6 -o addr show scope global 2>/dev/null | awk '!/ tentative| dadfailed/ {print $4}' | sed 's|/.*||'
 }
 
-ipv6_has_public() { ipv6_addrs | grep -qiE '^[23][0-9a-f]{0,3}:'; }
-ipv6_has_default_route() { ip -6 route show default 2>/dev/null | grep -q .; }
+ipv6_has_public() { ipv6_addrs | grep -iE '^[23][0-9a-f]{0,3}:' >/dev/null; }
+ipv6_has_default_route() { ip -6 route show default 2>/dev/null | grep -E . >/dev/null; }
 ipv6_test_connectivity() {
   ipv6_is_disabled && return 1
   ipv6_has_public || return 1
