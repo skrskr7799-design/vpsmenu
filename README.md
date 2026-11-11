@@ -10,7 +10,15 @@
 apt-get update -qq && apt-get install -y -qq curl && curl -fsSL https://raw.githubusercontent.com/ВАШ_НИК/vpsmenu/main/vpsmenu.sh -o /usr/local/bin/vpsmenu && chmod +x /usr/local/bin/vpsmenu && vpsmenu
 ```
 
-Под обычным пользователем с sudo добавь `sudo` перед `apt-get`, `curl` и `chmod`. Дальше запуск из любого места: `vpsmenu`.
+**Если работаешь под обычным пользователем с sudo:**
+
+Скопируй и выполни команду целиком:
+
+```bash
+sudo apt-get update -qq && sudo apt-get install -y -qq curl && sudo curl -fsSL https://raw.githubusercontent.com/skrskr7799-design/vpsmenu/main/vpsmenu.sh -o /usr/local/bin/vpsmenu && sudo chmod +x /usr/local/bin/vpsmenu && vpsmenu
+```
+
+После установки запускай панель командой `vpsmenu` из любого каталога.
 
 Перед публикацией впиши репозиторий в `src/10-constants.sh` и пересобери (`bash build.sh`):
 
