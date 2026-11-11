@@ -140,6 +140,7 @@ menu_maint() {
     menu_item 5 "Автообновления безопасности"
     menu_item 6 "Бэкап конфигов сервера"
     menu_item 7 "Список бэкапов"
+    menu_item 8 "IPv6 (включить / выключить)"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
@@ -150,6 +151,7 @@ menu_maint() {
       5) mod_autoupdates ;;
       6) mod_conf_backup ;;
       7) mod_backup_list ;;
+      8) mod_ipv6 ;;
       0) return 0 ;;
       *) warn "Нет такого пункта."; sleep 1 ;;
     esac
