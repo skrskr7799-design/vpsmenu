@@ -36,12 +36,14 @@ user_setup() { # user_setup ИМЯ [copy_keys: ask|1|0]
   fi
 
   step "Права sudo"
+  local sudo_group
+  sudo_group="$(user_sudo_group)"
   if user_in_sudo "$user"; then
-    ok "'$user' уже в группе sudo."
-  elif usermod -aG sudo "$user"; then
-    ok "'$user' добавлен в группу sudo."
+    ok "'$user' уже имеет права sudo."
+  elif usermod -aG "$sudo_group" "$user"; then
+    ok "'$user' добавлен в группу $sudo_group."
   else
-    err "Не удалось добавить в группу sudo."; return 1
+    err "Не удалось добавить в группу $sudo_group."; return 1
   fi
 
   step "Проверка"
