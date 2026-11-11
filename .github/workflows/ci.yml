@@ -1,0 +1,27 @@
+name: vpsmenu CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check generated build
+        run: bash build.sh --check
+
+      - name: Run tests
+        run: bash tests/run.sh
