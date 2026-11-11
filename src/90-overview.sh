@@ -15,6 +15,12 @@ status_panel() {
     printf '  %-10s %s\n' "SSH" "$(badge off 'sshd не найден')"
   fi
 
+  if ipv6_is_disabled; then
+    printf '  %-10s %s\n' "IPv6" "$(badge ok 'выключен')"
+  else
+    printf '  %-10s %s\n' "IPv6" "$(badge warn 'включён')"
+  fi
+
   if ! cmd_exists ufw; then printf '  %-10s %s\n' "UFW" "$(badge off 'не установлен')"
   elif ufw_is_active; then printf '  %-10s %s\n' "UFW" "$(badge ok 'активен')"
   else printf '  %-10s %s\n' "UFW" "$(badge warn 'установлен, выключен')"; fi
