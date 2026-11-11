@@ -800,11 +800,11 @@ user_sudo_status() {
 user_is_sudo_admin() { [[ $(user_sudo_status "$1") == yes ]]; }
 
 user_list_accounts() {
-  local name pass uid gid gecos home shell sudo_state marker current
+  local name uid home shell sudo_state marker current
   current="$(user_login_name)"
   printf '  %-18s %-7s %-10s %s\n' "Пользователь" "UID" "sudo" "Домашний каталог"
   printf '  %-18s %-7s %-10s %s\n' "------------------" "-------" "----------" "----------------"
-  while IFS=: read -r name pass uid gid gecos home shell; do
+  while IFS=: read -r name _ uid _ _ home shell; do
     user_is_managed_account "$uid" "$shell" || continue
     sudo_state="$(user_sudo_status "$name")"; marker=""
     [[ $name == "$current" ]] && marker=" ← текущий"
