@@ -4143,7 +4143,7 @@ mod_wizard() {
   local -a steps=(
     "Обновление системы|mod_sys_update"
     "Часовой пояс и NTP|mod_timezone_ntp"
-    "Пользователь с sudo|mod_user"
+    "Пользователь с sudo|mod_user_create"
     "SSH: добавить публичный ключ|mod_ssh_addkey"
     "SSH: запрет входа под root|mod_ssh_disable_root"
     "SSH: вход только по ключам (необязательно)|mod_ssh_keys_only"
@@ -6460,7 +6460,7 @@ main_menu() {
     menu_item a "Security Audit — проверка безопасности"
     menu_item n "NetBird — приватная сеть (VPN)"
     echo
-    menu_item 1 "Пользователь с sudo"
+    menu_item 1 "Пользователи"
     menu_item 2 "SSH: root, ключи, порт"
     menu_item 3 "UFW (файрвол)"
     menu_item 4 "nftables"
