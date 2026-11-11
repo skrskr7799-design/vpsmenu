@@ -24,9 +24,6 @@ jobs:
       - name: Build generated script from src
         run: bash build.sh
 
-      - name: Run tests
-        run: bash tests/run.sh
-
       - name: Commit generated script
         run: |
           if ! git diff --quiet -- vpsmenu.sh; then
@@ -36,3 +33,6 @@ jobs:
             git commit -m "build: regenerate vpsmenu.sh from src"
             git push
           fi
+
+      - name: Run tests
+        run: bash tests/run.sh
