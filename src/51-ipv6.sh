@@ -14,12 +14,29 @@ ipv6_is_disabled() { # 0 = IPv6 сейчас выключен
   [[ $v == 1 ]]
 }
 
-ipv6_has_global() { # есть ли глобальные IPv6-адреса
+ipv6_has_global() { # есть ли IPv6-адреса scope global (включая ULA)
   ip -6 -o addr show scope global 2>/dev/null | grep -q .
 }
 
-ipv6_addrs() { # печатает глобальные IPv6 (по одному в строке)
+ipv6_addrs() { # печатает IPv6 scope global (по одному в строке)
   ip -6 -o addr show scope global 2>/dev/null | awk '{print $4}' | sed 's|/.*||'
+}
+
+ipv6_has_public() { ipv6_addrs | grep -qiE '^[23][0-9a-f]{0,3}:'; }
+ipv6_has_default_route() { ip -6 route show default 2>/dev/null | grep -q .; }
+ipv6_test_connectivity() {
+  ipv6_is_disabled && return 1
+  ipv6_has_public || return 1
+  ipv6_has_default_route || return 1
+  command -v curl >/dev/null 2>&1 || return 2
+  curl -6 -fsS --connect-timeout 3 --max-time 5 https://api64.ipify.org >/dev/null 2>&1
+}
+ipv6_local_state() {
+  if ipv6_is_disabled; then echo "выключен"
+  elif ipv6_has_public && ipv6_has_default_route; then echo "адрес и маршрут есть"
+  elif ipv6_has_public; then echo "адрес есть, маршрута нет"
+  elif ipv6_has_default_route; then echo "маршрут есть, публичного IPv6 нет"
+  else echo "включён, публичный IPv6 не обнаружен"; fi
 }
 
 ipv6_ufw_ipv6() { # yes|no|? — поддержка IPv6 в UFW
@@ -30,31 +47,37 @@ ipv6_ufw_ipv6() { # yes|no|? — поддержка IPv6 в UFW
   else echo "?"; fi
 }
 
-ipv6_status_lines() { # печатает строки статуса для меню/обзора
+ipv6_status_lines() {
   local ufw a
   if ipv6_is_disabled; then
-    printf '  %-14s %s\n' "IPv6" "$(badge ok 'выключен (sysctl)')"
+    printf '  %-14s %s\\n' "IPv6 ядро" "$(badge ok 'выключен (sysctl)')"
   else
-    printf '  %-14s %s\n' "IPv6" "$(badge warn 'включён')"
+    printf '  %-14s %s\\n' "IPv6 ядро" "$(badge warn 'включён в ядре')"
   fi
-  if [[ -f $IPV6_SYSCTL ]]; then
-    printf '  %-14s %s\n' "Файл" "$IPV6_SYSCTL"
-  else
-    printf '  %-14s %s\n' "Файл" "${C_DIM}нет (настройка не через vpsmenu)${C_RESET}"
-  fi
-  if ipv6_has_global; then
-    printf '  %-14s %s\n' "Адреса" "есть глобальные:"
+  if ipv6_has_public; then
+    printf '  %-14s %s\\n' "Публичный IP" "$(badge ok 'адрес обнаружен')"
     while read -r a; do
-      [[ -n $a ]] && printf '                 %s\n' "$a"
+      [[ $a =~ ^[23][0-9a-fA-F]{0,3}: ]] && printf '                 %s\\n' "$a"
     done < <(ipv6_addrs)
   else
-    printf '  %-14s %s\n' "Адреса" "${C_DIM}глобальных IPv6 нет${C_RESET}"
+    printf '  %-14s %s\\n' "Публичный IP" "$(badge warn 'не обнаружен')"
+  fi
+  if ipv6_has_default_route; then
+    printf '  %-14s %s\\n' "Маршрут" "$(badge ok 'IPv6 default route есть')"
+  else
+    printf '  %-14s %s\\n' "Маршрут" "$(badge warn 'IPv6 default route нет')"
+  fi
+  printf '  %-14s %s\\n' "Интернет" "${C_DIM}не проверялся — нажми «Проверить связь»${C_RESET}"
+  if [[ -f $IPV6_SYSCTL ]]; then
+    printf '  %-14s %s\\n' "Файл" "$IPV6_SYSCTL"
+  else
+    printf '  %-14s %s\\n' "Файл" "${C_DIM}нет (настройка не через vpsmenu)${C_RESET}"
   fi
   ufw="$(ipv6_ufw_ipv6)"
   case $ufw in
-    yes) printf '  %-14s %s\n' "UFW IPv6" "$(badge ok 'IPV6=yes')" ;;
-    no)  printf '  %-14s %s\n' "UFW IPv6" "$(badge warn 'IPV6=no')" ;;
-    *)   printf '  %-14s %s\n' "UFW IPv6" "${C_DIM}не определён${C_RESET}" ;;
+    yes) printf '  %-14s %s\\n' "UFW IPv6" "$(badge ok 'IPV6=yes')" ;;
+    no)  printf '  %-14s %s\\n' "UFW IPv6" "$(badge warn 'IPV6=no')" ;;
+    *)   printf '  %-14s %s\\n' "UFW IPv6" "${C_DIM}не определён${C_RESET}" ;;
   esac
 }
 
@@ -131,7 +154,8 @@ mod_ipv6() {
     else
       menu_item 1 "Выключить IPv6"
     fi
-    menu_item 2 "Обновить статус"
+    menu_item 2 "Обновить локальный статус"
+    menu_item 3 "Проверить связь с IPv6-интернетом"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
@@ -153,6 +177,24 @@ mod_ipv6() {
         fi
         ;;
       2) ;;
+      3)
+        header "Проверка IPv6-интернета"
+        if ipv6_is_disabled; then
+          warn "IPv6 выключен в ядре."
+        elif ! ipv6_has_public; then
+          warn "Не найден публичный IPv6-адрес (2000::/3)."
+        elif ! ipv6_has_default_route; then
+          warn "Не найден маршрут IPv6 по умолчанию."
+        elif ! command -v curl >/dev/null 2>&1; then
+          warn "curl не установлен — внешнюю проверку выполнить нечем."
+        elif ipv6_test_connectivity; then
+          ok "Внешнее IPv6-соединение работает."
+        else
+          warn "Не удалось подтвердить IPv6-доступ в интернет."
+          hint "Причиной могут быть DNS, маршрутизация, firewall или недоступность сервиса проверки."
+        fi
+        pause
+        ;;
       0) return 0 ;;
       *) warn "Нет такого пункта."; sleep 1 ;;
     esac
