@@ -161,6 +161,31 @@ if user_set_sudo admin; then fail "нельзя отзывать sudo у пос�
 [[ $GPASSWD_CALLED == 0 ]] || fail "gpasswd не должен запускаться для последнего администратора"
 pass "защита последнего sudo-администратора при отзыве прав"
 
+# Проверяем отзыв прав у пользователя, когда остаётся другой администратор.
+ADMIN_IS_SUDO=1
+ADMIN_GROUPS="admin sudo wheel"
+GPASSWD_LOG=""
+user_admin_count() { echo 2; }
+user_sudo_status() { if [[ $1 == admin && $ADMIN_IS_SUDO == 1 ]]; then echo yes; else echo no; fi; }
+user_is_sudo_admin() { [[ $1 == admin && $ADMIN_IS_SUDO == 1 ]]; }
+id() {
+  if [[ $1 == -nG && $2 == admin ]]; then echo "$ADMIN_GROUPS"
+  elif [[ $1 == -nG ]]; then echo "$2"
+  else command id "$@"
+  fi
+}
+gpasswd() {
+  GPASSWD_LOG+="$3 "
+  ADMIN_IS_SUDO=0
+  return 0
+}
+if user_set_sudo admin; then
+  [[ $GPASSWD_LOG == "sudo wheel " ]] || fail "отзыв должен удалить пользователя из sudo и wheel"
+else
+  fail "отзыв sudo при наличии другого администратора должен пройти"
+fi
+pass "отзыв sudo из групп sudo и wheel"
+
 ask() { ASK_RESULT=2; }
 if user_pick_account "Тест выбора"; then
   [[ $USER_PICKED == guest ]] || fail "выбор по номеру должен вернуть guest"
@@ -168,6 +193,13 @@ else
   fail "выбор пользователя по номеру должен пройти"
 fi
 pass "выбор пользователя по номеру"
+
+SSH_KEY_CALL=""
+ssh_addkey_apply() { SSH_KEY_CALL="$1|$2"; }
+ask() { ASK_RESULT="ssh-ed25519 AAAATEST public-key"; }
+user_add_ssh_key guest
+[[ $SSH_KEY_CALL == "guest|ssh-ed25519 AAAATEST public-key" ]] || fail "SSH-ключ должен передаваться существующей функции проверки и записи"
+pass "добавление SSH-ключа из менеджера"
 
 DELETE_TOKEN=""
 confirm() { return 1; }
