@@ -10,7 +10,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Собрать vpsmenu.sh из исходников\n        run: bash build.sh\n\n      - name: Собранный vpsmenu.sh соответствует src/
+      - name: Собрать vpsmenu.sh из исходников
+        run: bash build.sh
+
+      - name: Собранный vpsmenu.sh соответствует src/
         run: bash build.sh --check
 
       - name: Проверка синтаксиса
