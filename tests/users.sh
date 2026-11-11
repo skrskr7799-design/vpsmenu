@@ -139,6 +139,7 @@ else
 fi
 pass "блокировка и разблокировка пароля"
 
+TEST_PASSWD_STATE=L
 TEST_UNLOCK_TO_NP=1
 if user_toggle_password_lock guest; then fail "разблокировка NP не должна проходить"; fi
 [[ $TEST_PASSWD_STATE == L ]] || fail "после неудачной разблокировки NP пароль должен остаться заблокированным"
