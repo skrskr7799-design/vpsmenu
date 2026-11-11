@@ -16,7 +16,7 @@ main_menu() {
     menu_item a "Security Audit — проверка безопасности"
     menu_item n "NetBird — приватная сеть (VPN)"
     echo
-    menu_item 1 "Пользователь с sudo"
+    menu_item 1 "Пользователи"
     menu_item 2 "SSH: root, ключи, порт"
     menu_item 3 "UFW (файрвол)"
     menu_item 4 "nftables"
