@@ -36,6 +36,7 @@ ufw_is_active() { [[ $UFW_ACTIVE == 1 ]]; }
 ipv6_ufw_ipv6() { echo "$UFW_IPV6"; }
 ok() { :; }; warn() { :; }; err() { :; }; hint() { :; }
 source "$ROOT/src/51-ipv6.sh"
+ipv6_ufw_ipv6() { echo "$UFW_IPV6"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 ipv6_disable_apply || fail "disable should succeed"
 [[ $ALL == 1 && $DEFAULT == 1 && -f $IPV6_SYSCTL ]] || fail "disable state/config"
