@@ -97,13 +97,17 @@ ipv6_enable_apply() {
       return 1
     fi
   fi
-  if [[ -f $IPV6_SYSCTL ]]; then
-    rm -f "$IPV6_SYSCTL" || { err "Не удалось удалить $IPV6_SYSCTL."; return 1; }
-    ok "Удалён $IPV6_SYSCTL."
-  fi
   if ! sysctl -w net.ipv6.conf.all.disable_ipv6=0 net.ipv6.conf.default.disable_ipv6=0 >/dev/null 2>&1; then
-    warn "Не удалось выставить sysctl в 0 (возможно, права или контейнер)."
+    warn "Не удалось выставить sysctl в 0 (возможно, права или контейнер). Файл постоянной настройки не изменён."
     return 1
+  fi
+  if [[ -f $IPV6_SYSCTL ]]; then
+    if ! rm -f "$IPV6_SYSCTL"; then
+      sysctl -w net.ipv6.conf.all.disable_ipv6=1 net.ipv6.conf.default.disable_ipv6=1 >/dev/null 2>&1 || true
+      err "Не удалось удалить $IPV6_SYSCTL. Исходное состояние восстановления предпринято."
+      return 1
+    fi
+    ok "Удалён $IPV6_SYSCTL."
   fi
   if ipv6_is_disabled; then
     warn "IPv6 всё ещё отключён. Возможно, его глушит другой файл в /etc/sysctl.d/ или параметр ядра."
