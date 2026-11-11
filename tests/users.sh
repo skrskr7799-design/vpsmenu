@@ -108,13 +108,14 @@ user_has_active_session() { return 1; }
 ps() { return 0; }
 
 TEST_PASSWD_STATE=P
+TEST_UNLOCK_TO_NP=0
 passwd() {
   if [[ $1 == -S ]]; then
     printf '%s %s 2026-01-01 0 99999 7 -1\n' "$2" "$TEST_PASSWD_STATE"
   elif [[ $1 == -l ]]; then
     TEST_PASSWD_STATE=L
   elif [[ $1 == -u ]]; then
-    TEST_PASSWD_STATE=P
+    if (( TEST_UNLOCK_TO_NP )); then TEST_PASSWD_STATE=NP; else TEST_PASSWD_STATE=P; fi
   fi
   return 0
 }
@@ -137,6 +138,12 @@ else
   fail "разблокировка пароля должна пройти"
 fi
 pass "блокировка и разблокировка пароля"
+
+TEST_UNLOCK_TO_NP=1
+if user_toggle_password_lock guest; then fail "разблокировка NP не должна проходить"; fi
+[[ $TEST_PASSWD_STATE == L ]] || fail "после неудачной разблокировки NP пароль должен остаться заблокированным"
+TEST_UNLOCK_TO_NP=0
+pass "защита от разблокировки аккаунта без пароля"
 
 USERMOD_CALLED=0
 usermod() { USERMOD_CALLED=1; [[ $1 == -aG && $2 == sudo && $3 == guest ]]; }
