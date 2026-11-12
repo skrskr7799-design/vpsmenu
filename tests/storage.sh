@@ -148,7 +148,7 @@ unset -f apt-get journalctl docker snap
 # диагностический отчёт: закрытые права и основные разделы.
 st_docker_ok() { return 1; }
 timeout() { shift; "$@"; }
-du() { printf "100\\t/\\n"; }
+du() { printf '100\t/\n'; }
 yes st_report_generate
 yes test -f "$ST_REPORT_PATH"
 eq "600" "$(stat -c %a "$ST_REPORT_PATH")" "отчёт: права 600"
