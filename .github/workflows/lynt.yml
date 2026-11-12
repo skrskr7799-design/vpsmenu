@@ -20,10 +20,10 @@ jobs:
         run: bash -n vpsmenu.sh
 
       - name: ShellCheck
-        run: shellcheck -S warning vpsmenu.sh build.sh tests/unit.sh tests/ipv6.sh tests/users.sh
+        run: shellcheck -S warning vpsmenu.sh build.sh tests/unit.sh tests/netbird.sh tests/ipv6.sh tests/users.sh tests/storage.sh
 
       - name: Автотесты
-        run: bash tests/unit.sh
+        run: bash tests/run.sh
 
       - name: Репозиторий для самообновления заполнен
         run: |
