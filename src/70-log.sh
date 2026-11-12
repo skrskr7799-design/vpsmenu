@@ -19,13 +19,14 @@ la_since() {
 }
 
 la_normalize() {
-  sed -E -e 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/<IP>/g' \
-    -e 's/(sshd|sudo|dockerd|containerd)\[[0-9]+\]/\1[PID]/g' \
+  sed -E -e 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/<IPV4>/g' \
+    -e 's/([[:xdigit:]]{1,4}:){2,7}[[:xdigit:]]{0,4}/<IPV6>/g' \
+    -e 's/(sshd|sudo|dockerd|containerd|systemd)\[[0-9]+\]/\1[PID]/g' \
     -e 's/(pid|PID)[=: ]+[0-9]+/\1=<PID>/g' \
     -e 's/(port|PORT)[=: ]+[0-9]+/\1=<PORT>/g' \
-    -e 's/(user|username)[=: ]+[^ ,]+/\1=<USER>/g' <<<"$1"
+    -e 's/(user|username)[=: ]+[^ ,;]+/\1=<USER>/g' \
+    -e 's/for (invalid user|user) [^ ]+/for \1 <USER>/Ig' <<<"$1"
 }
-
 la_collect_journal() {
   local src="$1" unit="$2" priority="$3" line ts body tmp rc
   shift 3
@@ -53,54 +54,99 @@ la_collect_journal() {
 }
 
 la_collect_ssh() {
-  local tmp line ts body
+  local tmp line ts body rc
   if ! cmd_exists journalctl; then LA_STATUS="$LA_STATUS""SSH: unavailable"$'\n'; return; fi
-  tmp="$(mktemp)" || return
-  if timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -u ssh.service -u sshd.service -t sshd >"$tmp" 2>&1; then
-    LA_STATUS="$LA_STATUS""SSH: ok"$'\n'
+  tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS""SSH: temp-file error"$'\n'; return; }
+  timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -u ssh.service -u sshd.service -t sshd >"$tmp" 2>&1
+  rc=$?
+  if (( rc == 0 )) && ! grep -qiE 'permission denied|access denied' "$tmp"; then
     LA_SSH_OK="$(grep -Eic 'Accepted (password|publickey|keyboard-interactive)' "$tmp" || true)"
     LA_SSH_FAIL="$(grep -Eic 'Failed (password|publickey)|authentication failure|Invalid user|maximum authentication attempts' "$tmp" || true)"
-    while IFS= read -r line; do
-      grep -qiE 'Failed (password|publickey)|authentication failure|Invalid user|maximum authentication attempts' <<<"$line" || continue
-      ts="$(awk '{print $1}' <<<"$line")"
-      body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line")"
-      printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
-    done <"$tmp"
-  else LA_STATUS="$LA_STATUS""SSH: query failed"$'\n'; fi
+    if [[ -s $tmp ]]; then
+      while IFS= read -r line; do
+        grep -qiE 'Accepted (password|publickey|keyboard-interactive)|Failed (password|publickey)|authentication failure|Invalid user|maximum authentication attempts' <<<"$line" || continue
+        ts="$(awk '{print $1}' <<<"$line")"
+        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line")"
+        body="$(printf '%s' "$body" | tr '\t|' '  ')"
+        printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
+      done <"$tmp"
+      LA_STATUS="$LA_STATUS""SSH: ok (успешных: $LA_SSH_OK; неудачных: $LA_SSH_FAIL)"$'\n'
+    else LA_STATUS="$LA_STATUS""SSH: empty"$'\n'; fi
+  elif grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""SSH: permission denied"$'\n'
+  elif (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS""SSH: timeout"$'\n'
+  else LA_STATUS="$LA_STATUS""SSH: query failed (exit $rc)"$'\n'; fi
   rm -f "$tmp"
 }
-
 la_collect_systemd() {
-  local units unit
+  local tmp units unit rc count=0
   if ! cmd_exists systemctl || [[ ! -d /run/systemd/system ]]; then LA_STATUS="$LA_STATUS""systemd: unavailable"$'\n'; return; fi
-  units="$(timeout "$LA_TIMEOUT" systemctl --failed --type=service --no-legend --plain --no-pager 2>/dev/null | awk '{print $1}' | head -n 20)"
-  if [[ -z $units ]]; then LA_STATUS="$LA_STATUS""systemd failed units: none"$'\n'; return; fi
-  LA_STATUS="$LA_STATUS""systemd failed units: $(wc -l <<<"$units")"$'\n'
-  while IFS= read -r unit; do
-    [[ -n $unit ]] && la_collect_journal systemd "$unit" "$LA_PRIORITY" -u "$unit"
-  done <<<"$units"
+  tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS""systemd: temp-file error"$'\n'; return; }
+  timeout "$LA_TIMEOUT" systemctl --failed --type=service --no-legend --plain --no-pager >"$tmp" 2>&1
+  rc=$?
+  if (( rc != 0 )); then
+    if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""systemd: permission denied"$'\n'
+    elif (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS""systemd: timeout"$'\n'
+    else LA_STATUS="$LA_STATUS""systemd: query failed (exit $rc)"$'\n'; fi
+    rm -f "$tmp"; return
+  fi
+  if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""systemd: permission denied"$'\n'; rm -f "$tmp"; return; fi
+  units="$(awk 'NF {print $1}' "$tmp" | grep -E '^[A-Za-z0-9_.@:-]+\.service$' | head -n 20)"
+  if [[ -z $units ]]; then
+    LA_STATUS="$LA_STATUS""systemd failed units: none"$'\n'
+  else
+    while IFS= read -r unit; do
+      [[ -n $unit ]] || continue
+      count=$((count + 1))
+      la_collect_journal systemd "$unit" "$LA_PRIORITY" -u "$unit"
+    done <<<"$units"
+    LA_STATUS="$LA_STATUS""systemd failed units: $count (limit 20)"$'\n'
+  fi
+  rm -f "$tmp"
 }
-
 la_collect_docker() {
-  local names name tmp line ts body
-  if ! cmd_exists docker || ! docker info >/dev/null 2>&1; then LA_STATUS="$LA_STATUS""Docker: unavailable"$'\n'; return; fi
-  names="$(docker ps -a --format '{{.Names}}' 2>/dev/null | head -n 10)"
-  if [[ -z $names ]]; then LA_STATUS="$LA_STATUS""Docker: no containers"$'\n'; return; fi
-  LA_STATUS="$LA_STATUS""Docker: scanning up to 10 containers"$'\n'
+  local tmp names name line ts body rc count=0 failed=0
+  if ! cmd_exists docker; then LA_STATUS="$LA_STATUS""Docker: unavailable (docker missing)"$'\n'; return; fi
+  timeout "$LA_TIMEOUT" docker info >/dev/null 2>&1
+  rc=$?
+  if (( rc != 0 )); then
+    if (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS""Docker: timeout"$'\n'
+    else LA_STATUS="$LA_STATUS""Docker: unavailable (daemon unreachable)"$'\n'; fi
+    return
+  fi
+  tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS""Docker: temp-file error"$'\n'; return; }
+  timeout "$LA_TIMEOUT" docker ps -a --format '{{.Names}}' >"$tmp" 2>&1
+  rc=$?
+  if (( rc != 0 )); then LA_STATUS="$LA_STATUS""Docker: container list failed (exit $rc)"$'\n'; rm -f "$tmp"; return; fi
+  names="$(head -n 10 "$tmp")"
+  if [[ -z $names ]]; then LA_STATUS="$LA_STATUS""Docker: no containers"$'\n'; rm -f "$tmp"; return; fi
   while IFS= read -r name; do
     [[ -n $name ]] || continue
-    tmp="$(mktemp)" || continue
-    if timeout "$LA_TIMEOUT" docker logs --since "$LA_PERIOD" --tail 300 --timestamps "$name" >"$tmp" 2>&1; then
+    [[ $name == "$REMNA_CONTAINER" ]] && continue
+    count=$((count + 1))
+    timeout "$LA_TIMEOUT" docker logs --since "$LA_PERIOD" --tail 300 --timestamps "$name" >"$tmp" 2>&1
+    rc=$?
+    if (( rc == 0 )); then
       while IFS= read -r line; do
-        grep -qiE 'error|fatal|panic|failed|exception' <<<"$line" || continue
+        if [[ $LA_PRIORITY == 3 ]]; then
+          grep -qiE 'error|fatal|panic|failed|exception|critical' <<<"$line" || continue
+        else
+          grep -qiE 'error|fatal|panic|failed|exception|critical|warn(ing)?' <<<"$line" || continue
+        fi
         ts="$(awk '{print $1}' <<<"$line")"; body="$(cut -d' ' -f2- <<<"$line")"
+        body="$(printf '%s' "$body" | tr '\t|' '  ')"
         printf 'Docker\t%s\t%s\t%s\n' "$name" "$ts" "$body" >>"$LA_RAW"
       done <"$tmp"
+    else
+      failed=$((failed + 1))
+      if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""Docker/$name: permission denied"$'\n'
+      elif (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS""Docker/$name: timeout"$'\n'
+      else LA_STATUS="$LA_STATUS""Docker/$name: query failed (exit $rc)"$'\n'; fi
     fi
-    rm -f "$tmp"
   done <<<"$names"
+  if (( failed == 0 )); then LA_STATUS="$LA_STATUS""Docker: ok (containers checked: $count)"$'\n'
+  else LA_STATUS="$LA_STATUS""Docker: partial ($failed container log queries failed)"$'\n'; fi
+  rm -f "$tmp"
 }
-
 la_build_groups() {
   local source unit timestamp message normalized epoch severity tmp group_tmp
   tmp="$(mktemp)" || return 1
