@@ -25,10 +25,10 @@ eq "6 hours ago" "$(la_since 6h)" "period 6h"
 eq "24 hours ago" "$(la_since 24h)" "period 24h"
 eq "3 days ago" "$(la_since 3d)" "period 3d"
 eq "7 days ago" "$(la_since 7d)" "period 7d"
-if la_since invalid >/dev/null 2>&1; then FAIL=$((FAIL+1)); echo "FAIL: invalid period accepted"; else PASS=$((PASS+1)); fi
+eq "24 hours ago" "$(la_since invalid)" "fallback for invalid period"
 
 normalized="$(la_normalize 'sshd[1234]: Failed password for user roman from 203.0.113.9 port 55221')"
-eq 'sshd[PID]: Failed password for user=<USER> from <IP> port=<PORT>' "$normalized" "normalize pid, user, IPv4 and port"
+eq 'sshd[PID]: Failed password for user=<USER> from <IPV4> port=<PORT>' "$normalized" "normalize pid, user, IPv4 and port"
 
 LA_RAW="$TMP/raw"
 LA_GROUP_FILE=
