@@ -92,6 +92,7 @@ eq "db web" "$(st_docker_logs_list | cut -f2 | paste -sd' ')" "логи конт
 
 # старые ядра: только пакеты linux-*
 st_autoremove_sim() { printf 'Remv linux-image-5.15.0-91-generic [5.15.0-91.101]\nRemv linux-headers-5.15.0-91 [5.15.0-91.101]\nRemv libfoo [1.0]\n'; }
+eq "3" "$(st_autoremove_sim | wc -l)" "apt autoremove: полный список пакетов"
 eq "linux-headers-5.15.0-91 linux-image-5.15.0-91-generic" "$(st_old_kernels | cut -f2 | sort | paste -sd' ')" "старые ядра: только linux-*"
 
 # snap: только отключённые ревизии
