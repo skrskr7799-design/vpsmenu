@@ -70,7 +70,7 @@ curl() {
 IPV6_ADDR=2001:db8::1; IPV6_ROUTE=1
 ipv6_has_public || fail "public IPv6 address should be detected"
 status="$(ipv6_status_lines)"
-[[ $status != *'\\n'* ]] || fail "status output must contain real line breaks"
+[[ $status != *'\n'* ]] || fail "status output must contain real line breaks"
 [[ $(printf '%s\n' "$status" | wc -l) -ge 6 ]] || fail "status output must be multiline"
 ipv6_has_default_route || fail "default IPv6 route should be detected"
 ipv6_test_connectivity || fail "external IPv6 probe should pass"
