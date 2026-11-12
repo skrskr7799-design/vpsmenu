@@ -1,7 +1,7 @@
 # ══════════════════════════ Константы и глобальные переменные ══════════════════════════
 
 readonly APP_NAME="vpsmenu"
-readonly APP_VERSION="3.4.0"
+readonly APP_VERSION="3.4.1"
 readonly INSTALL_PATH="/usr/local/bin/${APP_NAME}"
 readonly LOG_FILE="${VPSMENU_LOG_FILE:-/var/log/${APP_NAME}.log}"
 
