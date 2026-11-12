@@ -10,16 +10,55 @@ ST_DOCKER_DIR="${VPSMENU_ST_DOCKER_DIR:-/var/lib/docker/containers}"
 ST_SNAP_DIR="${VPSMENU_ST_SNAP_DIR:-/var/lib/snapd/snaps}"
 ST_CRASH_DIRS="${VPSMENU_ST_CRASH_DIRS:-/var/crash /var/lib/systemd/coredump}"
 ST_DU_TIMEOUT="${VPSMENU_ST_DU_TIMEOUT:-60}"
+ST_REPORT_DIR="${VPSMENU_ST_REPORT_DIR:-/var/backups/vpsmenu}"
 ST_JOURNAL_KEEP="200M"
 ST_LOG_AGE_DAYS=14
 ST_CRASH_AGE_DAYS=7
 
-declare -a ST_ROWS=() ST_PLAN_IDS=() ST_PLAN_TITLES=() ST_PLAN_EST=()
+declare -a ST_ROWS=() ST_INODE_ROWS=() ST_PLAN_IDS=() ST_PLAN_TITLES=() ST_PLAN_EST=()
+ST_REPORT_PATH=""
 ST_TOTAL_KB=0
 ST_PARTIAL=0
 
 # ── Измерения ───────────────────────────────────────────────────────────────
 st_avail_kb() { df -Pk / 2>/dev/null | awk 'NR == 2 {print $4}'; }
+
+st_inode_scan() { # заполняет ST_INODE_ROWS: «процент|использовано|всего|точка|устройство»
+  local fs total used free pct mount
+  ST_INODE_ROWS=()
+  while read -r fs total used free pct mount; do
+    [[ $total =~ ^[0-9]+$ && $used =~ ^[0-9]+$ ]] || continue
+    pct=${pct%\%}
+    [[ $pct =~ ^[0-9]+$ ]] || continue
+    ST_INODE_ROWS+=("$pct|$used|$total|$mount|$fs")
+  done < <(df -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2)
+}
+
+st_report_generate() { # формирует диагностический отчёт; путь возвращает в ST_REPORT_PATH
+  local stamp
+  ST_REPORT_PATH=""
+  mkdir -p "$ST_REPORT_DIR" || return 1
+  stamp="$(date +%Y%m%d-%H%M%S)"
+  ST_REPORT_PATH="$ST_REPORT_DIR/storage-$stamp-$.txt"
+  if ! {
+    printf 'VPSMENU STORAGE ANALYZER REPORT\n'
+    printf 'Date: %s\n' "$(date -Is 2>/dev/null || date)"
+    printf '\n[FILESYSTEMS: SPACE]\n'
+    df -PTk -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>&1
+    printf '\n[FILESYSTEMS: INODES]\n'
+    df -Pi -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>&1
+    printf '\n[LARGEST DIRECTORIES: /]\n'
+    timeout "$ST_DU_TIMEOUT" du -x -k -d 1 / 2>/dev/null | sort -rn | head -n 10
+    printf '\n[DOCKER STORAGE]\n'
+    if st_docker_ok; then timeout 15 docker system df 2>&1; else printf 'Docker unavailable or inactive\n'; fi
+  } >"$ST_REPORT_PATH"; then
+    rm -f "$ST_REPORT_PATH"
+    ST_REPORT_PATH=""
+    return 1
+  fi
+  chmod 600 "$ST_REPORT_PATH" || { rm -f "$ST_REPORT_PATH"; ST_REPORT_PATH=""; return 1; }
+  return 0
+}
 
 st_dir_kb() { # размер каталога в КБ (0, если каталога нет)
   local v
@@ -174,13 +213,35 @@ st_freed_report() { # st_freed_report ДО_КБ — сколько места о
 
 # ── Обзор: куда ушло место ──────────────────────────────────────────────────
 st_overview_render() {
-  local kb path pct bw=10 shown=0 line jkb rkb rcount docker_kb ak kern_kb kcount snap_kb scount crash_kb name size used mnt t total active recl
+  local kb path pct bw=10 shown=0 line jkb rkb rcount docker_kb ak kern_kb kcount snap_kb scount crash_kb name size used mnt t total active recl fs fstype avail
   local -a rows=()
   ui_section "Диски"
   while read -r _ size used _ pct mnt; do
     pct=${pct%\%}
     ui_meter "$(ui_trunc "$mnt" 7)" "$pct" "$(ui_human_kb "$used") / $(ui_human_kb "$size")"
   done < <(df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2 | head -n 4)
+
+  ui_section "Файловые системы"
+  while read -r fs fstype size used avail pct mnt; do
+    pct=${pct%\%}
+    [[ $pct =~ ^[0-9]+$ ]] || continue
+    ui_meter "$(ui_trunc "$mnt ($fstype)" 18)" "$pct" "$(ui_human_kb "$used") / $(ui_human_kb "$size")"
+  done < <(df -PTk -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2 | head -n 6)
+
+  ui_section "Использование inode"
+  st_inode_scan
+  if (( ${#ST_INODE_ROWS[@]} == 0 )); then
+    info "Нет данных об inode."
+  else
+    for line in "${ST_INODE_ROWS[@]}"; do
+      IFS='|' read -r pct used size mnt fs <<<"$line"
+      if (( pct >= 85 )); then
+        ui_line warn "$mnt ($fs): $pct% · $used / $size inode"
+      else
+        ui_kv "$mnt" "$pct% · $used / $size inode" 18
+      fi
+    done
+  fi
 
   ui_section "Самые большие каталоги (/)"
   st_du_scan / 10
@@ -574,6 +635,17 @@ mod_st_snap_crash() {
   esac
 }
 
+mod_st_report() {
+  header "Отчёт Storage Analyzer"
+  if st_report_generate; then
+    ok "Отчёт сохранён: $ST_REPORT_PATH"
+    hint "Права доступа: 600. В отчёте — файловые системы, inode, крупные каталоги и Docker."
+  else
+    err "Не удалось сформировать отчёт в $ST_REPORT_DIR."
+  fi
+  pause
+}
+
 mod_st_bigfiles() {
   local mb found
   header "Найти большие файлы"
@@ -606,6 +678,7 @@ menu_storage() {
     menu_item 6 "Пакеты: кэш apt и старые ядра"
     menu_item 7 "Snap и дампы падений"
     menu_item 8 "Найти большие файлы"
+    menu_item 9 "Сохранить диагностический отчёт"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
@@ -617,6 +690,7 @@ menu_storage() {
       6) mod_st_packages ;;
       7) mod_st_snap_crash ;;
       8) mod_st_bigfiles ;;
+      9) mod_st_report ;;
       0) return 0 ;;
       *) warn "Нет такого пункта."; sleep 1 ;;
     esac
