@@ -428,7 +428,7 @@ audit_check_maintenance() {
   fi
   v="$(df -P / 2>/dev/null | awk 'NR == 2 {gsub("%", "", $5); print $5}')"
   if [[ $v =~ ^[0-9]+$ ]] && (( v >= 90 )); then
-    audit_issue disk system low "Корневой диск заполнен на $v%" "Освободи место: Docker → «Очистка места»" fn:mod_docker_cleanup
+    audit_issue disk system low "Корневой диск заполнен на $v%" "Найди, куда ушло место: Storage Analyzer (клавиша m)" fn:menu_storage
   elif [[ -n $v ]]; then
     audit_ok disk system "Свободное место на диске в норме ($v%)"
   fi
