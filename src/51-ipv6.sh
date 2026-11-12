@@ -50,34 +50,34 @@ ipv6_ufw_ipv6() { # yes|no|? — поддержка IPv6 в UFW
 ipv6_status_lines() {
   local ufw a
   if ipv6_is_disabled; then
-    printf '  %-14s %s\\n' "IPv6 ядро" "$(badge ok 'выключен (sysctl)')"
+    printf '  %-14s %s\n' "IPv6 ядро" "$(badge ok 'выключен (sysctl)')"
   else
-    printf '  %-14s %s\\n' "IPv6 ядро" "$(badge warn 'включён в ядре')"
+    printf '  %-14s %s\n' "IPv6 ядро" "$(badge warn 'включён в ядре')"
   fi
   if ipv6_has_public; then
-    printf '  %-14s %s\\n' "Публичный IP" "$(badge ok 'адрес обнаружен')"
+    printf '  %-14s %s\n' "Публичный IP" "$(badge ok 'адрес обнаружен')"
     while read -r a; do
-      [[ $a =~ ^[23][0-9a-fA-F]{0,3}: ]] && printf '                 %s\\n' "$a"
+      [[ $a =~ ^[23][0-9a-fA-F]{0,3}: ]] && printf '                 %s\n' "$a"
     done < <(ipv6_addrs)
   else
-    printf '  %-14s %s\\n' "Публичный IP" "$(badge warn 'не обнаружен')"
+    printf '  %-14s %s\n' "Публичный IP" "$(badge warn 'не обнаружен')"
   fi
   if ipv6_has_default_route; then
-    printf '  %-14s %s\\n' "Маршрут" "$(badge ok 'IPv6 default route есть')"
+    printf '  %-14s %s\n' "Маршрут" "$(badge ok 'IPv6 default route есть')"
   else
-    printf '  %-14s %s\\n' "Маршрут" "$(badge warn 'IPv6 default route нет')"
+    printf '  %-14s %s\n' "Маршрут" "$(badge warn 'IPv6 default route нет')"
   fi
-  printf '  %-14s %s\\n' "Интернет" "${C_DIM}не проверялся — нажми «Проверить связь»${C_RESET}"
+  printf '  %-14s %s\n' "Интернет" "${C_DIM}не проверялся — нажми «Проверить связь»${C_RESET}"
   if [[ -f $IPV6_SYSCTL ]]; then
-    printf '  %-14s %s\\n' "Файл" "$IPV6_SYSCTL"
+    printf '  %-14s %s\n' "Файл" "$IPV6_SYSCTL"
   else
-    printf '  %-14s %s\\n' "Файл" "${C_DIM}нет (настройка не через vpsmenu)${C_RESET}"
+    printf '  %-14s %s\n' "Файл" "${C_DIM}нет (настройка не через vpsmenu)${C_RESET}"
   fi
   ufw="$(ipv6_ufw_ipv6)"
   case $ufw in
-    yes) printf '  %-14s %s\\n' "UFW IPv6" "$(badge ok 'IPV6=yes')" ;;
-    no)  printf '  %-14s %s\\n' "UFW IPv6" "$(badge warn 'IPV6=no')" ;;
-    *)   printf '  %-14s %s\\n' "UFW IPv6" "${C_DIM}не определён${C_RESET}" ;;
+    yes) printf '  %-14s %s\n' "UFW IPv6" "$(badge ok 'IPV6=yes')" ;;
+    no)  printf '  %-14s %s\n' "UFW IPv6" "$(badge warn 'IPV6=no')" ;;
+    *)   printf '  %-14s %s\n' "UFW IPv6" "${C_DIM}не определён${C_RESET}" ;;
   esac
 }
 
