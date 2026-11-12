@@ -186,7 +186,7 @@ la_scan() {
   [[ -n $LA_GROUP_FILE && -f $LA_GROUP_FILE ]] && rm -f "$LA_GROUP_FILE"
   LA_RAW="$(mktemp)" || return 1
   chmod 600 "$LA_RAW"
-  LA_STATUS=; LA_SSH_OK=0; LA_SSH_FAIL=0; LA_EVENT_COUNT=0
+  LA_STATUS=; LA_SSH_OK=0; LA_SSH_FAIL=0
   la_collect_journal system "" "$LA_PRIORITY"
   la_collect_journal kernel kernel "$LA_PRIORITY" -k
   la_collect_ssh
