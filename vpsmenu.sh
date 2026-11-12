@@ -7106,30 +7106,30 @@ la_collect_journal() {
   local src="$1" unit="$2" priority="$3" line ts body tmp rc
   shift 3
   if ! cmd_exists journalctl; then LA_STATUS="$LA_STATUS$src: unavailable"$'\n'; return 1; fi
-  tmp="$(mktemp)" || return 1
-  if timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -p "$priority" "$@" >"$tmp" 2>&1; then
-    if [[ ! -s $tmp ]]; then LA_STATUS="$LA_STATUS$src: empty"$'\n'
+  tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS$src: temp-file error"$'\n'; return 1; }
+  timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -p "$priority" "$@" >"$tmp" 2>&1
+  rc=$?
+  if (( rc == 0 )); then
+    if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS$src: permission denied"$'\n'
+    elif grep -qiE 'no journal files|journal files are not accessible' "$tmp"; then LA_STATUS="$LA_STATUS$src: unavailable"$'\n'
+    elif [[ ! -s $tmp ]]; then LA_STATUS="$LA_STATUS$src: empty"$'\n'
     else
       LA_STATUS="$LA_STATUS$src: ok"$'\n'
       while IFS= read -r line; do
         [[ -n $line ]] || continue
         ts="$(awk '{print $1}' <<<"$line")"
-        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line")"
-        body="$(tr '\t|' '  ' <<<"$body")"
+        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line" | tr '\t|' '  ')"
+        if [[ $src == system ]] && grep -qiE 'sshd\[[0-9]+\]|sshd:' <<<"$body"; then continue; fi
         printf '%s\t%s\t%s\t%s\n' "$src" "$unit" "$ts" "$body" >>"$LA_RAW"
       done <"$tmp"
     fi
-  else
-    rc=$?
-    if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS$src: permission denied"$'\n'
-    elif (( rc == 124 )); then LA_STATUS="$LA_STATUS$src: timeout"$'\n'
-    else LA_STATUS="$LA_STATUS$src: query failed (exit $rc)"$'\n'; fi
-  fi
+  elif grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS$src: permission denied"$'\n'
+  elif (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS$src: timeout"$'\n'
+  else LA_STATUS="$LA_STATUS$src: query failed (exit $rc)"$'\n'; fi
   rm -f "$tmp"
 }
-
 la_collect_ssh() {
-  local tmp line ts body rc
+  local tmp line ts body rc accepted_shown=0
   if ! cmd_exists journalctl; then LA_STATUS="$LA_STATUS""SSH: unavailable"$'\n'; return; fi
   tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS""SSH: temp-file error"$'\n'; return; }
   timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -u ssh.service -u sshd.service -t sshd >"$tmp" 2>&1
@@ -7141,9 +7141,15 @@ la_collect_ssh() {
       while IFS= read -r line; do
         grep -qiE 'Accepted (password|publickey|keyboard-interactive)|Failed (password|publickey)|authentication failure|Invalid user|maximum authentication attempts' <<<"$line" || continue
         ts="$(awk '{print $1}' <<<"$line")"
-        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line")"
-        body="$(printf '%s' "$body" | tr '\t|' '  ')"
-        printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
+        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line" | tr '\t|' '  ')"
+        if grep -qiE 'Accepted ' <<<"$body"; then
+          if (( accepted_shown < 5 )); then
+            LA_STATUS="$LA_STATUS""SSH accepted: $ts $body"$'\n'
+            accepted_shown=$((accepted_shown + 1))
+          fi
+        else
+          printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
+        fi
       done <"$tmp"
       LA_STATUS="$LA_STATUS""SSH: ok (успешных: $LA_SSH_OK; неудачных: $LA_SSH_FAIL)"$'\n'
     else LA_STATUS="$LA_STATUS""SSH: empty"$'\n'; fi
@@ -7165,7 +7171,7 @@ la_collect_systemd() {
     rm -f "$tmp"; return
   fi
   if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""systemd: permission denied"$'\n'; rm -f "$tmp"; return; fi
-  units="$(awk 'NF {print $1}' "$tmp" | grep -E '^[A-Za-z0-9_.@:-]+\.service$' | head -n 20)"
+  units="$(awk 'NF {print $1}' "$tmp" | grep -E '^[A-Za-z0-9_.@:-]+\.service$' | head -n 10)"
   if [[ -z $units ]]; then
     LA_STATUS="$LA_STATUS""systemd failed units: none"$'\n'
   else
@@ -7174,7 +7180,7 @@ la_collect_systemd() {
       count=$((count + 1))
       la_collect_journal systemd "$unit" "$LA_PRIORITY" -u "$unit"
     done <<<"$units"
-    LA_STATUS="$LA_STATUS""systemd failed units: $count (limit 20)"$'\n'
+    LA_STATUS="$LA_STATUS""systemd failed units: $count (limit 10)"$'\n'
   fi
   rm -f "$tmp"
 }
@@ -7207,8 +7213,8 @@ la_collect_docker() {
         else
           grep -qiE 'error|fatal|panic|failed|exception|critical|warn(ing)?' <<<"$line" || continue
         fi
-        ts="$(awk '{print $1}' <<<"$line")"; body="$(cut -d' ' -f2- <<<"$line")"
-        body="$(printf '%s' "$body" | tr '\t|' '  ')"
+        ts="$(awk '{print $1}' <<<"$line")"
+        body="$(cut -d' ' -f2- <<<"$line" | tr '\t|' '  ')"
         printf 'Docker\t%s\t%s\t%s\n' "$name" "$ts" "$body" >>"$LA_RAW"
       done <"$tmp"
     else
@@ -7231,7 +7237,8 @@ la_build_groups() {
     normalized="$(la_normalize "$message")"
     epoch="$(date -d "$timestamp" +%s 2>/dev/null)" || continue
     severity=error
-    grep -qiE 'warn(ing)?' <<<"$message" && severity=warning
+    if [[ $LA_PRIORITY == 4 ]]; then severity=warning; fi
+    grep -qiE 'error|fatal|panic|failed|exception|critical' <<<"$message" && severity=error
     message="$(printf '%s' "$message" | tr '\t\r\n' '   ')"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$source" "$unit" "$timestamp" "$epoch" "$severity" "$message" "$normalized" >>"$tmp"
   done <"$LA_RAW"
@@ -7260,26 +7267,45 @@ la_scan() {
   [[ -n $LA_RAW && -f $LA_RAW ]] && rm -f "$LA_RAW"
   [[ -n $LA_GROUP_FILE && -f $LA_GROUP_FILE ]] && rm -f "$LA_GROUP_FILE"
   LA_RAW="$(mktemp)" || return 1
-  chmod 600 "$LA_RAW"
+  chmod 600 "$LA_RAW" || { rm -f "$LA_RAW"; LA_RAW=; return 1; }
   LA_STATUS=; LA_SSH_OK=0; LA_SSH_FAIL=0
   la_collect_journal system "" "$LA_PRIORITY"
   la_collect_journal kernel kernel "$LA_PRIORITY" -k
   la_collect_ssh
   la_collect_systemd
   la_collect_docker
-  if cmd_exists docker && docker inspect "$REMNA_CONTAINER" >/dev/null 2>&1; then
-    local tmp line ts body
-    tmp="$(mktemp)"
-    if timeout "$LA_TIMEOUT" docker logs --since "$LA_PERIOD" --tail 500 --timestamps "$REMNA_CONTAINER" >"$tmp" 2>&1; then
-      while IFS= read -r line; do
-        grep -qiE 'error|fatal|panic|failed|exception' <<<"$line" || continue
-        ts="$(awk '{print $1}' <<<"$line")"; body="$(cut -d' ' -f2- <<<"$line")"
-        printf 'Remnanode\t%s\t%s\t%s\n' "$REMNA_CONTAINER" "$ts" "$body" >>"$LA_RAW"
-      done <"$tmp"
-      LA_STATUS+="Remnanode: ok"$'\n'
-    else LA_STATUS+="Remnanode: query failed"$'\n'; fi
-    rm -f "$tmp"
-  else LA_STATUS+="Remnanode: not configured"$'\n'; fi
+  if ! cmd_exists docker; then
+    LA_STATUS+="Remnanode: unavailable (docker missing)"$'\n'
+  else
+    timeout "$LA_TIMEOUT" docker inspect "$REMNA_CONTAINER" >/dev/null 2>&1
+    local inspect_rc=$?
+    if (( inspect_rc == 0 )); then
+      local tmp line ts body rc
+      tmp="$(mktemp)" || { LA_STATUS+="Remnanode: temp-file error"$'\n'; la_build_groups; return $?; }
+      timeout "$LA_TIMEOUT" docker logs --since "$LA_PERIOD" --tail 500 --timestamps "$REMNA_CONTAINER" >"$tmp" 2>&1
+      rc=$?
+      if (( rc == 0 )); then
+        while IFS= read -r line; do
+          if [[ $LA_PRIORITY == 3 ]]; then
+            grep -qiE 'error|fatal|panic|failed|exception|critical' <<<"$line" || continue
+          else
+            grep -qiE 'error|fatal|panic|failed|exception|critical|warn(ing)?' <<<"$line" || continue
+          fi
+          ts="$(awk '{print $1}' <<<"$line")"
+          body="$(cut -d' ' -f2- <<<"$line" | tr '\t|' '  ')"
+          printf 'Remnanode\t%s\t%s\t%s\n' "$REMNA_CONTAINER" "$ts" "$body" >>"$LA_RAW"
+        done <"$tmp"
+        LA_STATUS+="Remnanode: ok"$'\n'
+      elif (( rc == 124 || rc == 137 )); then LA_STATUS+="Remnanode: timeout"$'\n'
+      elif grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS+="Remnanode: permission denied"$'\n'
+      else LA_STATUS+="Remnanode: query failed (exit $rc)"$'\n'; fi
+      rm -f "$tmp"
+    elif (( inspect_rc == 124 || inspect_rc == 137 )); then
+      LA_STATUS+="Remnanode: timeout while checking container"$'\n'
+    else
+      LA_STATUS+="Remnanode: not configured (container not found)"$'\n'
+    fi
+  fi
   la_build_groups || return 1
 }
 la_export() {
@@ -7320,7 +7346,7 @@ menu_logs() {
     echo; read_choice
     case $CHOICE in
       1)
-        la_scan
+        if ! la_scan; then err "Не удалось выполнить сканирование."; pause; continue; fi
         header "Log Analyzer — сводка"
         printf '  Период: %s · приоритет: %s\n' "$LA_PERIOD" "$LA_PRIORITY"
         printf '  Событий: %s · групп: %s · SSH: %s успешных / %s неудачных\n\n' "$(wc -l <"$LA_RAW")" "$(wc -l <"$LA_GROUP_FILE")" "$LA_SSH_OK" "$LA_SSH_FAIL"
