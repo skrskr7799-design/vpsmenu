@@ -15,7 +15,7 @@ export VPSMENU_SOURCE_ONLY=1 NO_COLOR=1
 export VPSMENU_LOG_FILE="$TMP/log" VPSMENU_CONF_FILE="$TMP/conf" VPSMENU_BACKUP_DIR="$TMP/backups"
 export VPSMENU_STATE_DIR="$TMP/state" VPSMENU_PROFILE_DIR="$TMP/profiles"
 export VPSMENU_ST_LOG_DIR="$TMP/varlog" VPSMENU_ST_APT_CACHE="$TMP/aptcache" VPSMENU_ST_DOCKER_DIR="$TMP/dockercont"
-export VPSMENU_ST_SNAP_DIR="$TMP/snaps" VPSMENU_ST_CRASH_DIRS="$TMP/crash1 $TMP/crash2"
+export VPSMENU_ST_SNAP_DIR="$TMP/snaps" VPSMENU_ST_CRASH_DIRS="$TMP/crash1 $TMP/crash2" VPSMENU_ST_REPORT_DIR="$TMP/reports"
 # shellcheck source=/dev/null
 source ./vpsmenu.sh
 
@@ -50,6 +50,20 @@ eq 0 "$ST_PARTIAL" "du: без таймаута"
 mkdir -p "$TMP/slow"; printf '#!/bin/sh\nsleep 5\n' >"$TMP/slow/du"; chmod +x "$TMP/slow/du"
 ( PATH="$TMP/slow:$PATH"; ST_DU_TIMEOUT=1; st_du_scan "$TMP/tree" 9; echo "partial=$ST_PARTIAL" ) >"$TMP/slow.out"
 eq "partial=1" "$(cat "$TMP/slow.out")" "du: таймаут помечает результат неполным"
+
+# inode: разбор корректных строк df и пропуск некорректных данных.
+df() {
+  if [[ " $* " == *" -Pi "* ]]; then
+    printf 'Filesystem Inodes IUsed IFree IUse%% Mounted on\n/dev/vda1 1000 900 100 90%% /\n/dev/vdb1 2000 200 1800 10%% /data\n'
+  else
+    command df "$@"
+  fi
+}
+st_inode_scan
+eq "2" "${#ST_INODE_ROWS[@]}" "inode: количество файловых систем"
+eq "90|900|1000|/|/dev/vda1" "${ST_INODE_ROWS[0]}" "inode: заполнение 90%"
+eq "10|200|2000|/data|/dev/vdb1" "${ST_INODE_ROWS[1]}" "inode: второй mount point"
+unset -f df
 
 # архивы журналов и крупные файлы
 mkdir -p "$TMP/varlog"
@@ -130,6 +144,18 @@ eq "apt-get clean|journalctl --vacuum-size=200M|snap remove core20 --revision=21
 no test -f "$TMP/varlog/old.1"
 yes test -f "$TMP/varlog/big.log"
 unset -f apt-get journalctl docker snap
+
+# диагностический отчёт: закрытые права и основные разделы.
+st_docker_ok() { return 1; }
+timeout() { shift; "$@"; }
+du() { printf '100\t/\n'; }
+yes st_report_generate
+yes test -f "$ST_REPORT_PATH"
+eq "600" "$(stat -c %a "$ST_REPORT_PATH")" "отчёт: права 600"
+yes grep -q "FILESYSTEMS: SPACE" "$ST_REPORT_PATH"
+yes grep -q "FILESYSTEMS: INODES" "$ST_REPORT_PATH"
+yes grep -q "LARGEST DIRECTORIES" "$ST_REPORT_PATH"
+unset -f timeout du st_docker_ok
 
 echo "Storage: тестов пройдено: $PASS, провалено: $FAIL"
 [[ $FAIL -eq 0 ]]
