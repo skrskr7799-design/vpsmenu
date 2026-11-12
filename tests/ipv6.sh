@@ -35,6 +35,7 @@ cmd_exists() { [[ $1 == ufw ]]; }
 ufw_is_active() { [[ $UFW_ACTIVE == 1 ]]; }
 ipv6_ufw_ipv6() { echo "$UFW_IPV6"; }
 ok() { :; }; warn() { :; }; err() { :; }; hint() { :; }
+badge() { printf '[%s] %s' "$1" "$2"; }
 source "$ROOT/src/51-ipv6.sh"
 ipv6_ufw_ipv6() { echo "$UFW_IPV6"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
@@ -57,7 +58,7 @@ IPV6_ROUTE=0
 CURL_RC=0
 ip() {
   if [[ ${1:-} == -6 && ${2:-} == -o ]]; then
-    [[ -n $IPV6_ADDR ]] && printf '2: eth0 inet6 %s/64 scope global\\n' "$IPV6_ADDR"
+    [[ -n $IPV6_ADDR ]] && printf '2: eth0 inet6 %s/64 scope global\n' "$IPV6_ADDR"
   elif [[ ${1:-} == -6 && ${2:-} == route ]]; then
     [[ $IPV6_ROUTE == 1 ]] && echo "default via fe80::1 dev eth0"
   fi
@@ -68,6 +69,9 @@ curl() {
 }
 IPV6_ADDR=2001:db8::1; IPV6_ROUTE=1
 ipv6_has_public || fail "public IPv6 address should be detected"
+status="$(ipv6_status_lines)"
+[[ $status != *'\\n'* ]] || fail "status output must contain real line breaks"
+[[ $(printf '%s\n' "$status" | wc -l) -ge 6 ]] || fail "status output must be multiline"
 ipv6_has_default_route || fail "default IPv6 route should be detected"
 ipv6_test_connectivity || fail "external IPv6 probe should pass"
 IPV6_ADDR=fd00::1
