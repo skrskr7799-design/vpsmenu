@@ -501,20 +501,21 @@ mod_st_docker() {
 }
 
 mod_st_packages() {
-  local before n kb list
+  local before n kb list pkg
   header "Пакеты: кэш apt и старые ядра"
   kb="$(st_dir_kb "$ST_APT_CACHE")"
   ui_kv "Кэш apt" "$(ui_human_kb "$kb")" 11
-  list="$(st_old_kernels)"; n="$(printf '%s' "$list" | grep -c .)"
-  ui_kv "Ядра" "устаревших пакетов: $n" 11
+  list="$(st_autoremove_sim)"
+  n="$(grep -c '^Remv' <<<"$list" || true)"
+  ui_kv "apt autoremove" "пакетов к удалению: $n" 11
   if (( n > 0 )); then
-    while IFS=$'\t' read -r kb name; do
-      printf '    %s%s  %s%s\n' "$C_DIM" "$(ui_pad "$(ui_human_kb "${kb:-0}")" 7)" "$name" "$C_RESET"
+    while read -r _ pkg _; do
+      [[ -n $pkg ]] && printf '    %s•%s %s\n' "$C_DIM" "$C_RESET" "$pkg"
     done <<<"$list"
   fi
   echo
   menu_item 1 "Очистить кэш apt (apt-get clean)"
-  menu_item 2 "Удалить устаревшие ядра и ненужные пакеты (apt autoremove)"
+  menu_item 2 "Удалить все пакеты из списка (apt autoremove --purge)"
   menu_item 0 "Назад"
   echo; read_choice
   case $CHOICE in
@@ -527,9 +528,9 @@ mod_st_packages() {
       pause
       ;;
     2)
-      if (( n == 0 )); then ok "Устаревших ядер и ненужных пакетов нет."; pause; return 0; fi
-      hint "Работающее и самое новое ядро apt сохраняет. Перезагрузка не требуется."
-      if confirm "Выполнить apt autoremove --purge?" N; then
+      if (( n == 0 )); then ok "apt autoremove не предлагает пакетов к удалению."; pause; return 0; fi
+      hint "Будут удалены все пакеты из списка выше, не только ядра. Apt сохраняет используемое ядро."
+      if confirm "Выполнить apt autoremove --purge для $n пакетов?" N; then
         before="$(st_avail_kb)"
         if apt_run autoremove --purge -y -q; then ok "Готово."; else err "apt autoremove завершился с ошибкой."; fi
         st_freed_report "$before"
