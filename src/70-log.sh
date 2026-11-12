@@ -31,28 +31,28 @@ la_collect_journal() {
   local src="$1" unit="$2" priority="$3" line ts body tmp rc
   shift 3
   if ! cmd_exists journalctl; then LA_STATUS="$LA_STATUS$src: unavailable"$'\n'; return 1; fi
-  tmp="$(mktemp)" || return 1
-  if timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -p "$priority" "$@" >"$tmp" 2>&1; then
-    if [[ ! -s $tmp ]]; then LA_STATUS="$LA_STATUS$src: empty"$'\n'
+  tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS$src: temp-file error"$'\n'; return 1; }
+  timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -p "$priority" "$@" >"$tmp" 2>&1
+  rc=$?
+  if (( rc == 0 )); then
+    if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS$src: permission denied"$'\n'
+    elif grep -qiE 'no journal files|journal files are not accessible' "$tmp"; then LA_STATUS="$LA_STATUS$src: unavailable"$'\n'
+    elif [[ ! -s $tmp ]]; then LA_STATUS="$LA_STATUS$src: empty"$'\n'
     else
       LA_STATUS="$LA_STATUS$src: ok"$'\n'
       while IFS= read -r line; do
         [[ -n $line ]] || continue
         ts="$(awk '{print $1}' <<<"$line")"
-        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line")"
-        body="$(tr '\t|' '  ' <<<"$body")"
+        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line" | tr '\t|' '  ')"
+        if [[ $src == system ]] && grep -qiE 'sshd\[[0-9]+\]|sshd:' <<<"$body"; then continue; fi
         printf '%s\t%s\t%s\t%s\n' "$src" "$unit" "$ts" "$body" >>"$LA_RAW"
       done <"$tmp"
     fi
-  else
-    rc=$?
-    if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS$src: permission denied"$'\n'
-    elif (( rc == 124 )); then LA_STATUS="$LA_STATUS$src: timeout"$'\n'
-    else LA_STATUS="$LA_STATUS$src: query failed (exit $rc)"$'\n'; fi
-  fi
+  elif grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS$src: permission denied"$'\n'
+  elif (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS$src: timeout"$'\n'
+  else LA_STATUS="$LA_STATUS$src: query failed (exit $rc)"$'\n'; fi
   rm -f "$tmp"
 }
-
 la_collect_ssh() {
   local tmp line ts body rc
   if ! cmd_exists journalctl; then LA_STATUS="$LA_STATUS""SSH: unavailable"$'\n'; return; fi
@@ -132,8 +132,8 @@ la_collect_docker() {
         else
           grep -qiE 'error|fatal|panic|failed|exception|critical|warn(ing)?' <<<"$line" || continue
         fi
-        ts="$(awk '{print $1}' <<<"$line")"; body="$(cut -d' ' -f2- <<<"$line")"
-        body="$(printf '%s' "$body" | tr '\t|' '  ')"
+        ts="$(awk '{print $1}' <<<"$line")"
+        body="$(cut -d' ' -f2- <<<"$line" | tr '\t|' '  ')"
         printf 'Docker\t%s\t%s\t%s\n' "$name" "$ts" "$body" >>"$LA_RAW"
       done <"$tmp"
     else
