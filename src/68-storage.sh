@@ -24,9 +24,9 @@ ST_PARTIAL=0
 st_avail_kb() { df -Pk / 2>/dev/null | awk 'NR == 2 {print $4}'; }
 
 st_inode_scan() { # заполняет ST_INODE_ROWS: «процент|использовано|всего|точка|устройство»
-  local fs total used free pct mount
+  local fs total used pct mount
   ST_INODE_ROWS=()
-  while read -r fs total used free pct mount; do
+  while read -r fs total used _ pct mount; do
     [[ $total =~ ^[0-9]+$ && $used =~ ^[0-9]+$ ]] || continue
     pct=${pct%\%}
     [[ $pct =~ ^[0-9]+$ ]] || continue
@@ -213,10 +213,10 @@ st_freed_report() { # st_freed_report ДО_КБ — сколько места о
 
 # ── Обзор: куда ушло место ──────────────────────────────────────────────────
 st_overview_render() {
-  local kb path pct bw=10 shown=0 line jkb rkb rcount docker_kb ak kern_kb kcount snap_kb scount crash_kb name size used mnt t total active recl fs fstype avail
+  local kb path pct bw=10 shown=0 line jkb rkb rcount docker_kb ak kern_kb kcount snap_kb scount crash_kb name size used mnt t total active recl fs fstype
   local -a rows=()
   ui_section "Диски и файловые системы"
-  while read -r fs fstype size used avail pct mnt; do
+  while read -r fs fstype size used _ pct mnt; do
     pct=${pct%\%}
     [[ $pct =~ ^[0-9]+$ ]] || continue
     ui_meter "$(ui_trunc "$mnt ($fstype)" 18)" "$pct" "$(ui_human_kb "$used") / $(ui_human_kb "$size")"
