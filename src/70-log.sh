@@ -54,7 +54,7 @@ la_collect_journal() {
   rm -f "$tmp"
 }
 la_collect_ssh() {
-  local tmp line ts body rc
+  local tmp line ts body rc accepted_shown=0
   if ! cmd_exists journalctl; then LA_STATUS="$LA_STATUS""SSH: unavailable"$'\n'; return; fi
   tmp="$(mktemp)" || { LA_STATUS="$LA_STATUS""SSH: temp-file error"$'\n'; return; }
   timeout "$LA_TIMEOUT" journalctl --since "$(la_since "$LA_PERIOD")" --no-pager -o short-iso-precise -n 1500 -u ssh.service -u sshd.service -t sshd >"$tmp" 2>&1
@@ -66,9 +66,15 @@ la_collect_ssh() {
       while IFS= read -r line; do
         grep -qiE 'Accepted (password|publickey|keyboard-interactive)|Failed (password|publickey)|authentication failure|Invalid user|maximum authentication attempts' <<<"$line" || continue
         ts="$(awk '{print $1}' <<<"$line")"
-        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line")"
-        body="$(printf '%s' "$body" | tr '\t|' '  ')"
-        printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
+        body="$(awk '{$1="";$2="";sub(/^  */,"");print}' <<<"$line" | tr '\t|' '  ')"
+        if grep -qiE 'Accepted ' <<<"$body"; then
+          if (( accepted_shown < 5 )); then
+            LA_STATUS="$LA_STATUS""SSH accepted: $ts $body"$'\n'
+            accepted_shown=$((accepted_shown + 1))
+          fi
+        else
+          printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
+        fi
       done <"$tmp"
       LA_STATUS="$LA_STATUS""SSH: ok (успешных: $LA_SSH_OK; неудачных: $LA_SSH_FAIL)"$'\n'
     else LA_STATUS="$LA_STATUS""SSH: empty"$'\n'; fi
