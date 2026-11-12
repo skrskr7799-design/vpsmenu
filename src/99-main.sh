@@ -16,6 +16,7 @@ main_menu() {
     menu_item a "Security Audit — проверка безопасности"
     menu_item n "NetBird — приватная сеть (VPN)"
     menu_item m "Storage Analyzer — куда ушло место"
+    menu_item l "Log Analyzer — журналы и ошибки"
     echo
     menu_item 1 "Пользователи"
     menu_item 2 "SSH: root, ключи, порт"
@@ -39,6 +40,7 @@ main_menu() {
       a|A|ф|Ф) menu_audit ;;
       n|N|т|Т) menu_netbird ;;
       m|M|ь|Ь) menu_storage ;;
+      l|L|д|Д) menu_logs ;;
       1)  mod_user ;;
       2)  menu_ssh ;;
       3)  menu_ufw ;;

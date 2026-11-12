@@ -18,7 +18,7 @@ declare -a UI_MENU_ITEMS=()
 declare -A MENU_TITLES=(
   [menu_ssh]="SSH" [menu_ufw]="UFW" [menu_nft]="nftables" [menu_f2b]="Fail2ban" [menu_docker]="Docker"
   [menu_remna]="Remnanode" [menu_watchdog]="Watchdog" [menu_maint]="Обслуживание" [menu_self]="Скрипт"
-  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_audit]="Security Audit" [menu_netbird]="NetBird"
+  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_logs]="Log Analyzer" [menu_audit]="Security Audit" [menu_netbird]="NetBird"
 )
 
 log()  { printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
