@@ -102,7 +102,7 @@ la_collect_docker() {
 }
 
 la_build_groups() {
-  local normalized timestamp epoch severity message tmp
+  local source unit timestamp message normalized epoch severity tmp group_tmp
   tmp="$(mktemp)" || return 1
   : >"$tmp"
   while IFS=$'\t' read -r source unit timestamp message; do
@@ -111,36 +111,36 @@ la_build_groups() {
     epoch="$(date -d "$timestamp" +%s 2>/dev/null)" || continue
     severity=error
     grep -qiE 'warn(ing)?' <<<"$message" && severity=warning
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$source" "$unit" "$timestamp" "$epoch" "$severity" "$normalized" >>"$tmp"
+    message="$(printf '%s' "$message" | tr '\t\r\n' '   ')"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$source" "$unit" "$timestamp" "$epoch" "$severity" "$message" "$normalized" >>"$tmp"
   done <"$LA_RAW"
-  LA_GROUP_FILE_TMP="$(mktemp)" || { rm -f "$tmp"; return 1; }
+  group_tmp="$(mktemp)" || { rm -f "$tmp"; return 1; }
   awk -F '\t' -v OFS='\t' '
-    NF >= 6 {
-      key=$1 SUBSEP $2 SUBSEP $6
+    NF >= 7 {
+      key=$1 SUBSEP $2 SUBSEP $7
       count[key]++
       if (!(key in first_epoch) || $4+0 < first_epoch[key]) { first_epoch[key]=$4+0; first[key]=$3 }
       if (!(key in last_epoch) || $4+0 > last_epoch[key]) { last_epoch[key]=$4+0; last[key]=$3 }
       if ($5 == "error") has_error[key]=1
       if (!seen[key SUBSEP $6] && examples[key] < 3) { seen[key SUBSEP $6]=1; n=++examples[key]; example[key,n]=$6 }
-      source[key]=$1; unit[key]=$2; normalized[key]=$6
+      source[key]=$1; unit[key]=$2; normalized[key]=$7
     }
     END {
       for (key in count) {
         severity=(has_error[key] ? "error" : "warning")
         print count[key],source[key],unit[key],first[key],last[key],severity,normalized[key],example[key,1],example[key,2],example[key,3],first_epoch[key]
       }
-    }' "$tmp" | sort -t "$(printf '\t')" -k1,1nr -k11,11n >"$LA_GROUP_FILE_TMP"
+    }' "$tmp" | sort -t "$(printf '\t')" -k1,1nr -k11,11n >"$group_tmp"
   rm -f "$tmp"
   [[ -n $LA_GROUP_FILE ]] && rm -f "$LA_GROUP_FILE"
-  LA_GROUP_FILE="$LA_GROUP_FILE_TMP"
+  LA_GROUP_FILE="$group_tmp"
 }
-
 la_scan() {
   [[ -n $LA_RAW && -f $LA_RAW ]] && rm -f "$LA_RAW"
   [[ -n $LA_GROUP_FILE && -f $LA_GROUP_FILE ]] && rm -f "$LA_GROUP_FILE"
   LA_RAW="$(mktemp)" || return 1
   chmod 600 "$LA_RAW"
-  LA_STATUS=; LA_SSH_OK=0; LA_SSH_FAIL=0
+  LA_STATUS=; LA_SSH_OK=0; LA_SSH_FAIL=0; LA_EVENT_COUNT=0
   la_collect_journal system "" "$LA_PRIORITY"
   la_collect_journal kernel kernel "$LA_PRIORITY" -k
   la_collect_ssh
@@ -160,7 +160,6 @@ la_scan() {
     rm -f "$tmp"
   else LA_STATUS+="Remnanode: not configured"$'\n'; fi
   la_build_groups || return 1
-  la_status_render 2>/dev/null || true
 }
 la_export() {
   local stamp path count source unit first last severity normalized e1 e2 e3 epoch
@@ -188,7 +187,7 @@ la_export() {
   printf '%s\n' "$path"
 }
 menu_logs() {
-  local choice page pages index line count source unit first last severity normalized e1 e2 e3 epoch report
+  local page pages index line count source unit first last severity normalized e1 e2 e3 epoch report start end idx from until
   while true; do
     header "Log Analyzer"
     printf '  Период: %s · уровень: %s\n\n' "$LA_PERIOD" "$([[ $LA_PRIORITY == 3 ]] && echo ошибки || echo ошибки + предупреждения)"
@@ -200,7 +199,7 @@ menu_logs() {
     echo; read_choice
     case $CHOICE in
       1)
-        la_scan || { err "Не удалось подготовить результаты."; pause; continue; }
+        la_scan
         header "Log Analyzer — сводка"
         printf '  Период: %s · приоритет: %s\n' "$LA_PERIOD" "$LA_PRIORITY"
         printf '  Событий: %s · групп: %s · SSH: %s успешных / %s неудачных\n\n' "$(wc -l <"$LA_RAW")" "$(wc -l <"$LA_GROUP_FILE")" "$LA_SSH_OK" "$LA_SSH_FAIL"
@@ -209,7 +208,6 @@ menu_logs() {
         while true; do
           pages=$(( ( $(wc -l <"$LA_GROUP_FILE") + 14 ) / 15 ))
           (( pages > 0 )) || pages=1
-          local start end idx
           start=$(( (page - 1) * 15 + 1 )); end=$(( start + 14 ))
           (( end > $(wc -l <"$LA_GROUP_FILE") )) && end=$(wc -l <"$LA_GROUP_FILE")
           printf '\n  Группы %d–%d · страница %d/%d\n\n' "$start" "$end" "$page" "$pages"
@@ -238,7 +236,6 @@ menu_logs() {
                 header "Контекст события"
                 printf '  Источник: %s · %s\n  Повторов: %s · первое: %s · последнее: %s\n  Шаблон: %s\n' "$source" "$unit" "$count" "$first" "$last" "$normalized"
                 printf '  Примеры:\n    - %s\n    - %s\n    - %s\n' "$e1" "$e2" "$e3"
-                local from until
                 from="$(date -d "$first - 2 minutes" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
                 until="$(date -d "$first + 1 minute" '+%Y-%m-%d %H:%M:%S' 2>/dev/null)"
                 if [[ $source == Docker || $source == Remnanode ]]; then
