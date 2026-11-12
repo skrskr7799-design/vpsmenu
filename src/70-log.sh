@@ -96,7 +96,7 @@ la_collect_systemd() {
     rm -f "$tmp"; return
   fi
   if grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""systemd: permission denied"$'\n'; rm -f "$tmp"; return; fi
-  units="$(awk 'NF {print $1}' "$tmp" | grep -E '^[A-Za-z0-9_.@:-]+\.service$' | head -n 20)"
+  units="$(awk 'NF {print $1}' "$tmp" | grep -E '^[A-Za-z0-9_.@:-]+\.service$' | head -n 10)"
   if [[ -z $units ]]; then
     LA_STATUS="$LA_STATUS""systemd failed units: none"$'\n'
   else
@@ -105,7 +105,7 @@ la_collect_systemd() {
       count=$((count + 1))
       la_collect_journal systemd "$unit" "$LA_PRIORITY" -u "$unit"
     done <<<"$units"
-    LA_STATUS="$LA_STATUS""systemd failed units: $count (limit 20)"$'\n'
+    LA_STATUS="$LA_STATUS""systemd failed units: $count (limit 10)"$'\n'
   fi
   rm -f "$tmp"
 }
@@ -162,7 +162,8 @@ la_build_groups() {
     normalized="$(la_normalize "$message")"
     epoch="$(date -d "$timestamp" +%s 2>/dev/null)" || continue
     severity=error
-    grep -qiE 'warn(ing)?' <<<"$message" && severity=warning
+    if [[ $LA_PRIORITY == 4 ]]; then severity=warning; fi
+    grep -qiE 'error|fatal|panic|failed|exception|critical' <<<"$message" && severity=error
     message="$(printf '%s' "$message" | tr '\t\r\n' '   ')"
     printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$source" "$unit" "$timestamp" "$epoch" "$severity" "$message" "$normalized" >>"$tmp"
   done <"$LA_RAW"
@@ -270,7 +271,7 @@ menu_logs() {
     echo; read_choice
     case $CHOICE in
       1)
-        la_scan
+        if ! la_scan; then err "Не удалось выполнить сканирование."; pause; continue; fi
         header "Log Analyzer — сводка"
         printf '  Период: %s · приоритет: %s\n' "$LA_PERIOD" "$LA_PRIORITY"
         printf '  Событий: %s · групп: %s · SSH: %s успешных / %s неудачных\n\n' "$(wc -l <"$LA_RAW")" "$(wc -l <"$LA_GROUP_FILE")" "$LA_SSH_OK" "$LA_SSH_FAIL"
