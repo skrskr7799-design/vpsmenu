@@ -191,26 +191,45 @@ la_scan() {
   [[ -n $LA_RAW && -f $LA_RAW ]] && rm -f "$LA_RAW"
   [[ -n $LA_GROUP_FILE && -f $LA_GROUP_FILE ]] && rm -f "$LA_GROUP_FILE"
   LA_RAW="$(mktemp)" || return 1
-  chmod 600 "$LA_RAW"
+  chmod 600 "$LA_RAW" || { rm -f "$LA_RAW"; LA_RAW=; return 1; }
   LA_STATUS=; LA_SSH_OK=0; LA_SSH_FAIL=0
   la_collect_journal system "" "$LA_PRIORITY"
   la_collect_journal kernel kernel "$LA_PRIORITY" -k
   la_collect_ssh
   la_collect_systemd
   la_collect_docker
-  if cmd_exists docker && docker inspect "$REMNA_CONTAINER" >/dev/null 2>&1; then
-    local tmp line ts body
-    tmp="$(mktemp)"
-    if timeout "$LA_TIMEOUT" docker logs --since "$LA_PERIOD" --tail 500 --timestamps "$REMNA_CONTAINER" >"$tmp" 2>&1; then
-      while IFS= read -r line; do
-        grep -qiE 'error|fatal|panic|failed|exception' <<<"$line" || continue
-        ts="$(awk '{print $1}' <<<"$line")"; body="$(cut -d' ' -f2- <<<"$line")"
-        printf 'Remnanode\t%s\t%s\t%s\n' "$REMNA_CONTAINER" "$ts" "$body" >>"$LA_RAW"
-      done <"$tmp"
-      LA_STATUS+="Remnanode: ok"$'\n'
-    else LA_STATUS+="Remnanode: query failed"$'\n'; fi
-    rm -f "$tmp"
-  else LA_STATUS+="Remnanode: not configured"$'\n'; fi
+  if ! cmd_exists docker; then
+    LA_STATUS+="Remnanode: unavailable (docker missing)"$'\n'
+  else
+    timeout "$LA_TIMEOUT" docker inspect "$REMNA_CONTAINER" >/dev/null 2>&1
+    local inspect_rc=$?
+    if (( inspect_rc == 0 )); then
+      local tmp line ts body rc
+      tmp="$(mktemp)" || { LA_STATUS+="Remnanode: temp-file error"$'\n'; la_build_groups; return $?; }
+      timeout "$LA_TIMEOUT" docker logs --since "$LA_PERIOD" --tail 500 --timestamps "$REMNA_CONTAINER" >"$tmp" 2>&1
+      rc=$?
+      if (( rc == 0 )); then
+        while IFS= read -r line; do
+          if [[ $LA_PRIORITY == 3 ]]; then
+            grep -qiE 'error|fatal|panic|failed|exception|critical' <<<"$line" || continue
+          else
+            grep -qiE 'error|fatal|panic|failed|exception|critical|warn(ing)?' <<<"$line" || continue
+          fi
+          ts="$(awk '{print $1}' <<<"$line")"
+          body="$(cut -d' ' -f2- <<<"$line" | tr '\t|' '  ')"
+          printf 'Remnanode\t%s\t%s\t%s\n' "$REMNA_CONTAINER" "$ts" "$body" >>"$LA_RAW"
+        done <"$tmp"
+        LA_STATUS+="Remnanode: ok"$'\n'
+      elif (( rc == 124 || rc == 137 )); then LA_STATUS+="Remnanode: timeout"$'\n'
+      elif grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS+="Remnanode: permission denied"$'\n'
+      else LA_STATUS+="Remnanode: query failed (exit $rc)"$'\n'; fi
+      rm -f "$tmp"
+    elif (( inspect_rc == 124 || inspect_rc == 137 )); then
+      LA_STATUS+="Remnanode: timeout while checking container"$'\n'
+    else
+      LA_STATUS+="Remnanode: not configured (container not found)"$'\n'
+    fi
+  fi
   la_build_groups || return 1
 }
 la_export() {
