@@ -39,7 +39,7 @@ st_report_generate() { # формирует диагностический от�
   ST_REPORT_PATH=""
   mkdir -p "$ST_REPORT_DIR" || return 1
   stamp="$(date +%Y%m%d-%H%M%S)"
-  ST_REPORT_PATH="$ST_REPORT_DIR/storage-$stamp-$.txt"
+  ST_REPORT_PATH="$ST_REPORT_DIR/storage-$stamp-${BASHPID}.txt"
   if ! {
     printf 'VPSMENU STORAGE ANALYZER REPORT\n'
     printf 'Date: %s\n' "$(date -Is 2>/dev/null || date)"
@@ -215,13 +215,7 @@ st_freed_report() { # st_freed_report ДО_КБ — сколько места о
 st_overview_render() {
   local kb path pct bw=10 shown=0 line jkb rkb rcount docker_kb ak kern_kb kcount snap_kb scount crash_kb name size used mnt t total active recl fs fstype avail
   local -a rows=()
-  ui_section "Диски"
-  while read -r _ size used _ pct mnt; do
-    pct=${pct%\%}
-    ui_meter "$(ui_trunc "$mnt" 7)" "$pct" "$(ui_human_kb "$used") / $(ui_human_kb "$size")"
-  done < <(df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2 | head -n 4)
-
-  ui_section "Файловые системы"
+  ui_section "Диски и файловые системы"
   while read -r fs fstype size used avail pct mnt; do
     pct=${pct%\%}
     [[ $pct =~ ^[0-9]+$ ]] || continue
