@@ -16,13 +16,13 @@ status_panel() {
   fi
 
   if ipv6_is_disabled; then
-    printf '  %-10s %s\\n' "IPv6" "$(badge ok 'выключен')"
+    printf '  %-10s %s\n' "IPv6" "$(badge ok 'выключен')"
   elif ipv6_has_public && ipv6_has_default_route; then
-    printf '  %-10s %s\\n' "IPv6" "$(badge ok 'публичный адрес и маршрут есть')"
+    printf '  %-10s %s\n' "IPv6" "$(badge ok 'публичный адрес и маршрут есть')"
   elif ipv6_has_public; then
-    printf '  %-10s %s\\n' "IPv6" "$(badge warn 'адрес есть, маршрута нет')"
+    printf '  %-10s %s\n' "IPv6" "$(badge warn 'адрес есть, маршрута нет')"
   else
-    printf '  %-10s %s\\n' "IPv6" "$(badge warn 'включён, публичный адрес не найден')"
+    printf '  %-10s %s\n' "IPv6" "$(badge warn 'включён, публичный адрес не найден')"
   fi
 
   if ! cmd_exists ufw; then printf '  %-10s %s\n' "UFW" "$(badge off 'не установлен')"
