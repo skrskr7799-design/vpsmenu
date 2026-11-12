@@ -37,7 +37,7 @@ dash_cpu_pct() { # загрузка CPU за короткий интервал �
 }
 
 dash_system() {
-  local cores l1 l5 l15 cpu mt ma mu mp st sf su sp size used avail pct mnt shown=0
+  local cores l1 l5 l15 cpu mt ma mu mp st sf su sp size used avail pct mnt shown=0 diskhot=0
   ui_section "Система"
   ui_kv "Хост" "$UI_HOST · $OS_PRETTY"
   ui_kv "Ядро" "$(uname -r) · аптайм $(dash_uptime)"
@@ -65,8 +65,10 @@ dash_system() {
     (( shown >= 4 )) && break
     pct=${pct%\%}
     ui_meter "$(ui_trunc "$mnt" 7)" "$pct" "$(ui_human_kb "$used") / $(ui_human_kb "$size")"
+    if [[ $pct =~ ^[0-9]+$ ]] && (( pct >= 85 )); then diskhot=1; fi
     shown=$(( shown + 1 ))
   done < <(df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2)
+  if (( diskhot )); then ui_line warn "Диск заполнен на 85% или больше: открой Storage Analyzer клавишей m"; fi
 }
 
 dash_network() {
