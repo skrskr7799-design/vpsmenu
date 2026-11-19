@@ -4486,7 +4486,7 @@ dash_system() {
   cores="$(nproc 2>/dev/null || echo 1)"
   read -r l1 l5 l15 _ </proc/loadavg
   cpu="$(dash_cpu_pct)"
-  ui_meter "CPU" "$cpu" "load $l1 / $l5 / $l15 · ядер $cores"
+  ui_meter "CPU" "$cpu" "нагрузка $l1 / $l5 / $l15 · ядер $cores"
 
   mt="$(dash_meminfo_kb MemTotal)"; ma="$(dash_meminfo_kb MemAvailable)"
   mt=${mt:-0}; ma=${ma:-0}
@@ -4525,7 +4525,7 @@ dash_network() {
     case $state in UP) col=$C_GREEN ;; DOWN) col=$C_RED ;; *) col=$C_DIM ;; esac
     ui_kv "$(ui_trunc "$name" 9)" "${col}${state}${C_RESET} ${a1:-—} ${a2:-}"
   done < <(ip -brief addr 2>/dev/null)
-  if (( hidden > 0 )); then ui_kv "docker" "${C_DIM}интерфейсов контейнеров: $hidden${C_RESET}"; fi
+  if (( hidden > 0 )); then ui_kv "Docker" "${C_DIM}интерфейсов контейнеров: $hidden${C_RESET}"; fi
   nbs="$(nb_summary)"
   if [[ ${nbs%%|*} != off ]]; then ui_kv "NetBird" "$(badge "${nbs%%|*}" "${nbs#*|}")"; fi
 
@@ -5019,7 +5019,7 @@ svc_card_render() { # svc_card_render ЮНИТ — карточка службы
   if [[ $mem =~ ^[0-9]+$ ]] && (( ${#mem} < 15 )); then ui_kv "Память" "$(ui_human_kb $(( mem / 1024 )))" 11; fi
   if [[ -n ${p[ActiveEnterTimestamp]:-} ]]; then ui_kv "С момента" "${p[ActiveEnterTimestamp]}" 11; fi
   if [[ -n ${p[NRestarts]:-} && ${p[NRestarts]} != 0 ]]; then ui_kv "Рестартов" "${C_YELLOW}${p[NRestarts]}${C_RESET}" 11; fi
-  if [[ -n ${p[Restart]:-} ]]; then ui_kv "Restart" "${p[Restart]}" 11; fi
+  if [[ -n ${p[Restart]:-} ]]; then ui_kv "Перезапуск" "${p[Restart]}" 11; fi
   if [[ -n ${p[FragmentPath]:-} ]]; then ui_kv "Юнит" "$(ui_trunc "${p[FragmentPath]}" $(( UI_W - 15 )))" 11; fi
   reason="$(svc_critical_reason "$unit")"
   if [[ -n $reason ]]; then echo; ui_line warn "Критичная служба — $reason"; fi
