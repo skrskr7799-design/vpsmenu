@@ -1035,8 +1035,12 @@ user_add_ssh_key() {
 user_list_accounts() {
   local name uid home shell sudo_state password_state marker current index=0
   current="$(user_login_name)"
-  printf '  %-3s %-16s %-6s %-7s %-15s %s\n' "#" "Пользователь" "UID" "sudo" "Пароль" "Домашний каталог"
-  printf '  %-3s %-16s %-6s %-7s %-15s %s\n' "---" "----------------" "------" "-------" "---------------" "----------------"
+  if (( UI_COMPACT )); then
+    printf '  #  Пользователь · sudo · пароль · домашний каталог\n'
+  else
+    printf '  %-3s %-16s %-6s %-7s %-15s %s\n' "#" "Пользователь" "UID" "sudo" "Пароль" "Домашний каталог"
+    printf '  %-3s %-16s %-6s %-7s %-15s %s\n' "---" "----------------" "------" "-------" "---------------" "----------------"
+  fi
   while IFS=: read -r name _ uid _ _ home shell; do
     user_is_managed_account "$uid" "$shell" || continue
     index=$((index + 1))
@@ -1045,7 +1049,13 @@ user_list_accounts() {
     marker=""
     [[ $name == "$current" ]] && marker=" ← текущий"
     case $sudo_state in yes) sudo_state="да" ;; no) sudo_state="нет" ;; *) sudo_state="?" ;; esac
-    printf '  %-3s %-16s %-6s %-7s %-15s %s%s\n' "$index" "$name" "$uid" "$sudo_state" "$password_state" "$home" "$marker"
+    if (( UI_COMPACT )); then
+      printf '  %s. %s%s\n' "$index" "$(ui_trunc "$name" $(( UI_W - 8 )))" "$marker"
+      printf '     sudo: %s · пароль: %s\n' "$sudo_state" "$password_state"
+      printf '     дом: %s\n' "$(ui_trunc "$home" $(( UI_W - 9 )))"
+    else
+      printf '  %-3s %-16s %-6s %-7s %-15s %s%s\n' "$index" "$name" "$uid" "$sudo_state" "$password_state" "$home" "$marker"
+    fi
   done < <(getent passwd)
   (( index > 0 ))
 }
@@ -1063,12 +1073,22 @@ user_pick_account() {
     count=$((count + 1))
   done < <(getent passwd)
   if (( count == 0 )); then warn "Обычных интерактивных пользователей не найдено."; pause; return 1; fi
-  printf '  %-3s %-18s %-8s %-15s %s\n' "#" "Пользователь" "sudo" "Пароль" "Домашний каталог"
-  printf '  %-3s %-18s %-8s %-15s %s\n' "---" "------------------" "--------" "---------------" "----------------"
+  if (( UI_COMPACT )); then
+    printf '  #  Пользователь · sudo · пароль · домашний каталог\n'
+  else
+    printf '  %-3s %-18s %-8s %-15s %s\n' "#" "Пользователь" "sudo" "Пароль" "Домашний каталог"
+    printf '  %-3s %-18s %-8s %-15s %s\n' "---" "------------------" "--------" "---------------" "----------------"
+  fi
   while (( index < count )); do
     name=${names[$index]}
     case $(user_sudo_status "$name") in yes) choice="да" ;; no) choice="нет" ;; *) choice="?" ;; esac
-    printf '  %-3s %-18s %-8s %-15s %s\n' "$((index + 1))" "$name" "$choice" "$(user_password_status "$name")" "$(getent passwd "$name" | cut -d: -f6)"
+    if (( UI_COMPACT )); then
+      printf '  %s. %s\n' "$((index + 1))" "$(ui_trunc "$name" $(( UI_W - 8 )))"
+      printf '     sudo: %s · пароль: %s\n' "$choice" "$(user_password_status "$name")"
+      printf '     дом: %s\n' "$(ui_trunc "$(getent passwd "$name" | cut -d: -f6)" $(( UI_W - 9 )))"
+    else
+      printf '  %-3s %-18s %-8s %-15s %s\n' "$((index + 1))" "$name" "$choice" "$(user_password_status "$name")" "$(getent passwd "$name" | cut -d: -f6)"
+    fi
     index=$((index + 1))
   done
   echo
