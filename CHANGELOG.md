@@ -1,3 +1,9 @@
+## 3.5.1 — Cosmetic UI Update
+
+- UI-only release: no system commands, configuration logic, security checks, module behavior, or menu actions intentionally changed.
+- Improved layout resilience on narrow terminals by lowering the UI width floor from 40 to 24 columns.
+- Unified pause prompt wording for interactive and non-interactive use.
+
 ## 3.5.0
 
 - **Log Analyzer** (клавиша `l` в главном меню): единый центр диагностики system journal, kernel, SSH, systemd, Docker и Remnanode.
