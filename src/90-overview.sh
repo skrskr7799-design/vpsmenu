@@ -58,16 +58,16 @@ status_panel() {
   else
     txt+=" · автообновл. выкл"; lvl=warn
   fi
-  printf '  %-10s %s\n' "Tuning" "$(badge "$lvl" "$txt")"
+  printf '  %-10s %s\n' "Оптимизация" "$(badge "$lvl" "$txt")"
 }
 
 mod_overview() {
   header "9. Обзор системы"
-  printf '  %-10s %s\n' "Kernel" "$(uname -r)"
-  printf '  %-10s %s\n' "Uptime" "$(uptime -p 2>/dev/null | sed 's/^up //')"
-  printf '  %-10s %s\n' "IP" "$(hostname -I 2>/dev/null | awk '{print $1}')"
-  printf '  %-10s %s\n' "Memory" "$(free -h | awk '/^Mem:/ {print $3 " / " $2}')"
-  printf '  %-10s %s\n' "Disk /" "$(df -h / | awk 'NR==2 {print $3 " / " $2 " (" $5 ")"}')"
+  printf '  %-10s %s\n' "Ядро" "$(uname -r)"
+  printf '  %-10s %s\n' "Аптайм" "$(uptime -p 2>/dev/null | sed 's/^up //')"
+  printf '  %-10s %s\n' "IP-адрес" "$(hostname -I 2>/dev/null | awk '{print $1}')"
+  printf '  %-10s %s\n' "Память" "$(free -h | awk '/^Mem:/ {print $3 " / " $2}')"
+  printf '  %-10s %s\n' "Диск /" "$(df -h / | awk 'NR==2 {print $3 " / " $2 " (" $5 ")"}')"
   hr
   status_panel
   hr
