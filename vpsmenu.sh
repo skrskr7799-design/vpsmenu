@@ -22,7 +22,7 @@ set -uo pipefail
 # ══════════════════════════ Константы и глобальные переменные ══════════════════════════
 
 readonly APP_NAME="vpsmenu"
-readonly APP_VERSION="3.5.0"
+readonly APP_VERSION="3.5.1"
 readonly INSTALL_PATH="/usr/local/bin/${APP_NAME}"
 readonly LOG_FILE="${VPSMENU_LOG_FILE:-/var/log/${APP_NAME}.log}"
 
@@ -154,7 +154,7 @@ ui_refresh_size() {
   cols="$(tput cols 2>/dev/null || echo 80)"
   [[ $cols =~ ^[0-9]+$ ]] || cols=80
   UI_W=$(( cols > 78 ? 78 : cols ))
-  if (( UI_W < 40 )); then UI_W=40; fi
+  if (( UI_W < 24 )); then UI_W=24; fi
   if (( cols < 64 )); then UI_COMPACT=1; else UI_COMPACT=0; fi
 }
 
@@ -355,12 +355,12 @@ ui_swallow_enter() { IFS= read -rsn1 -t 0.01 _ || true; }
 pause() {
   ui_flush_input
   if [[ -t 0 ]]; then
-    printf '  %sНажми любую клавишу…%s ' "$C_DIM" "$C_RESET"
+    printf '  %sНажми любую клавишу для продолжения…%s ' "$C_DIM" "$C_RESET"
     IFS= read -rsn1 _ || true
     ui_swallow_enter
     echo
   else
-    read -r -p "  Нажми Enter, чтобы продолжить… " _ || true
+    read -r -p "  Нажми Enter для продолжения… " _ || true
   fi
 }
 
