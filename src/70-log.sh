@@ -76,7 +76,7 @@ la_collect_ssh() {
           printf 'SSH\tsshd\t%s\t%s\n' "$ts" "$body" >>"$LA_RAW"
         fi
       done <"$tmp"
-      LA_STATUS="$LA_STATUS""SSH: ok (успешных: $LA_SSH_OK; неудачных: $LA_SSH_FAIL)"$'\n'
+      LA_STATUS="$LA_STATUS""SSH: проверено (успешных: $LA_SSH_OK; неудачных: $LA_SSH_FAIL)"$'\n'
     else LA_STATUS="$LA_STATUS""SSH: empty"$'\n'; fi
   elif grep -qiE 'permission denied|access denied' "$tmp"; then LA_STATUS="$LA_STATUS""SSH: permission denied"$'\n'
   elif (( rc == 124 || rc == 137 )); then LA_STATUS="$LA_STATUS""SSH: timeout"$'\n'
@@ -149,7 +149,7 @@ la_collect_docker() {
       else LA_STATUS="$LA_STATUS""Docker/$name: query failed (exit $rc)"$'\n'; fi
     fi
   done <<<"$names"
-  if (( failed == 0 )); then LA_STATUS="$LA_STATUS""Docker: ok (containers checked: $count)"$'\n'
+  if (( failed == 0 )); then LA_STATUS="$LA_STATUS""Docker: проверено (контейнеров: $count)"$'\n'
   else LA_STATUS="$LA_STATUS""Docker: partial ($failed container log queries failed)"$'\n'; fi
   rm -f "$tmp"
 }
@@ -246,14 +246,14 @@ la_export() {
     echo "Generated: $(date -Is)"
     echo "Period: $LA_PERIOD; priority: $LA_PRIORITY"
     echo "Events: $(wc -l <"$LA_RAW"); groups: $(wc -l <"$LA_GROUP_FILE")"
-    echo; echo "[SOURCE STATUS]"; printf '%s' "$LA_STATUS"
+    echo; echo "[СТАТУС ИСТОЧНИКОВ]"; printf '%s' "$LA_STATUS"
     echo; echo "[SSH]"; printf 'Successful logins: %s\nFailed logins: %s\n' "$LA_SSH_OK" "$LA_SSH_FAIL"
-    echo; echo "[GROUPED EVENTS]"
+    echo; echo "[СГРУППИРОВАННЫЕ СОБЫТИЯ]"
     printf 'Count\tSource\tUnit\tFirst\tLast\tSeverity\tNormalized\tExample 1\tExample 2\tExample 3\n'
     while IFS=$'\t' read -r count source unit first last severity normalized e1 e2 e3 epoch; do
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$count" "$source" "$unit" "$first" "$last" "$severity" "$normalized" "$e1" "$e2" "$e3"
     done <"$LA_GROUP_FILE"
-    echo; echo "[RAW EVENTS: first 500]"; head -n 500 "$LA_RAW"
+    echo; echo "[СЫРЫЕ СОБЫТИЯ: первые 500]"; head -n 500 "$LA_RAW"
   } >"$path" || { rm -f "$path"; return 1; }
   chmod 600 "$path" || { rm -f "$path"; return 1; }
   printf '%s\n' "$path"
