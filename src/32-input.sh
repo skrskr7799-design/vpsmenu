@@ -21,12 +21,12 @@ ui_swallow_enter() { IFS= read -rsn1 -t 0.01 _ || true; }
 pause() {
   ui_flush_input
   if [[ -t 0 ]]; then
-    printf '  %sНажми любую клавишу…%s ' "$C_DIM" "$C_RESET"
+    printf '  %sНажми любую клавишу для продолжения…%s ' "$C_DIM" "$C_RESET"
     IFS= read -rsn1 _ || true
     ui_swallow_enter
     echo
   else
-    read -r -p "  Нажми Enter, чтобы продолжить… " _ || true
+    read -r -p "  Нажми Enter для продолжения… " _ || true
   fi
 }
 
