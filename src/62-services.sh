@@ -298,7 +298,7 @@ svc_card_render() { # svc_card_render ЮНИТ — карточка службы
   if [[ $mem =~ ^[0-9]+$ ]] && (( ${#mem} < 15 )); then ui_kv "Память" "$(ui_human_kb $(( mem / 1024 )))" 11; fi
   if [[ -n ${p[ActiveEnterTimestamp]:-} ]]; then ui_kv "С момента" "${p[ActiveEnterTimestamp]}" 11; fi
   if [[ -n ${p[NRestarts]:-} && ${p[NRestarts]} != 0 ]]; then ui_kv "Рестартов" "${C_YELLOW}${p[NRestarts]}${C_RESET}" 11; fi
-  if [[ -n ${p[Restart]:-} ]]; then ui_kv "Restart" "${p[Restart]}" 11; fi
+  if [[ -n ${p[Restart]:-} ]]; then ui_kv "Перезапуск" "${p[Restart]}" 11; fi
   if [[ -n ${p[FragmentPath]:-} ]]; then ui_kv "Юнит" "$(ui_trunc "${p[FragmentPath]}" $(( UI_W - 15 )))" 11; fi
   reason="$(svc_critical_reason "$unit")"
   if [[ -n $reason ]]; then echo; ui_line warn "Критичная служба — $reason"; fi
