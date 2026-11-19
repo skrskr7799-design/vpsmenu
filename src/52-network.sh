@@ -65,7 +65,7 @@ mod_net_ping() {
   header "Задержка до серверов"
   if ! cmd_exists ping; then apt_install iputils-ping || { pause; return 1; }; fi
   local t out loss avg
-  printf '  %-14s %-14s %s\n' "Host" "Loss" "Avg"
+  printf '  %-14s %-14s %s\n' "Узел" "Потери" "Среднее"
   for t in 1.1.1.1 8.8.8.8 ya.ru github.com; do
     out="$(ping -c 4 -W 2 -q "$t" 2>&1)"
     loss="$(grep -oE '[0-9]+(\.[0-9]+)?% packet loss' <<<"$out" | head -n 1 | awk '{print $1}')"
