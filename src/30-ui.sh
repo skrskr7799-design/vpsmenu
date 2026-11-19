@@ -41,7 +41,7 @@ ui_refresh_size() {
   cols="$(tput cols 2>/dev/null || echo 80)"
   [[ $cols =~ ^[0-9]+$ ]] || cols=80
   UI_W=$(( cols > 78 ? 78 : cols ))
-  if (( UI_W < 40 )); then UI_W=40; fi
+  if (( UI_W < 24 )); then UI_W=24; fi
   if (( cols < 64 )); then UI_COMPACT=1; else UI_COMPACT=0; fi
 }
 
