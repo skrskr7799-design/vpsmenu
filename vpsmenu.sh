@@ -4530,7 +4530,7 @@ dash_system() {
     if [[ $pct =~ ^[0-9]+$ ]] && (( pct >= 85 )); then diskhot=1; fi
     shown=$(( shown + 1 ))
   done < <(df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2)
-  if (( diskhot )); then ui_line warn "Диск заполнен на 85% или больше: открой Storage Analyzer клавишей m"; fi
+  if (( diskhot )); then ui_line warn "Диск заполнен на 85% или больше: открой анализ хранилища клавишей m"; fi
 }
 
 dash_network() {
@@ -4582,7 +4582,7 @@ dash_services() {
       if (( n > 5 )); then break; fi
       printf '      %s%s%s\n' "$C_RED" "$u" "$C_RESET"
     done <<<"$failed"
-    printf '      %sразобраться: клавиша s в главном меню (Service Manager)%s\n' "$C_DIM" "$C_RESET"
+    printf '      %sразобраться: клавиша s в главном меню (управление службами)%s\n' "$C_DIM" "$C_RESET"
   fi
 }
 
@@ -7093,7 +7093,7 @@ menu_storage() {
   done
 }
 
-# ══════════════════════════ Log Analyzer ══════════════════════════
+# ══════════════════════════ Анализ журналов ══════════════════════════
 # Диагностика журналов. Модуль только читает логи и не меняет состояние сервера.
 
 LA_REPORT_DIR=/var/backups/vpsmenu
@@ -7337,14 +7337,14 @@ la_export() {
   stamp="$(date +%Y%m%d-%H%M%S)"
   path="$(mktemp "$LA_REPORT_DIR/log-analyzer-$stamp-XXXXXX.txt")" || return 1
   {
-    echo "VPSMENU LOG ANALYZER"
-    echo "Generated: $(date -Is)"
-    echo "Period: $LA_PERIOD; priority: $LA_PRIORITY"
-    echo "Events: $(wc -l <"$LA_RAW"); groups: $(wc -l <"$LA_GROUP_FILE")"
+    echo "VPSMENU — АНАЛИЗ ЖУРНАЛОВ"
+    echo "Создано: $(date -Is)"
+    echo "Период: $LA_PERIOD; уровень: $LA_PRIORITY"
+    echo "Событий: $(wc -l <"$LA_RAW"); групп: $(wc -l <"$LA_GROUP_FILE")"
     echo; echo "[СТАТУС ИСТОЧНИКОВ]"; printf '%s' "$LA_STATUS"
-    echo; echo "[SSH]"; printf 'Successful logins: %s\nFailed logins: %s\n' "$LA_SSH_OK" "$LA_SSH_FAIL"
+    echo; echo "[SSH]"; printf 'Успешные входы: %s\nНеудачные входы: %s\n' "$LA_SSH_OK" "$LA_SSH_FAIL"
     echo; echo "[СГРУППИРОВАННЫЕ СОБЫТИЯ]"
-    printf 'Count\tSource\tUnit\tFirst\tLast\tSeverity\tNormalized\tExample 1\tExample 2\tExample 3\n'
+    printf 'Повторы\tИсточник\tОбъект\tПервое\tПоследнее\tТип\tШаблон\tПример 1\tПример 2\tПример 3\n'
     while IFS=$'\t' read -r count source unit first last severity normalized e1 e2 e3 epoch; do
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$count" "$source" "$unit" "$first" "$last" "$severity" "$normalized" "$e1" "$e2" "$e3"
     done <"$LA_GROUP_FILE"
@@ -7356,7 +7356,7 @@ la_export() {
 menu_logs() {
   local page pages index line count source unit first last severity normalized e1 e2 e3 epoch report start end idx from until
   while true; do
-    header "Log Analyzer"
+    header "Анализ журналов"
     printf '  Период: %s · уровень: %s\n\n' "$LA_PERIOD" "$([[ $LA_PRIORITY == 3 ]] && echo ошибки || echo ошибки + предупреждения)"
     menu_item 1 "Сканировать журналы"
     menu_item 2 "Период: 1h / 6h / 24h / 3d / 7d"
@@ -7367,7 +7367,7 @@ menu_logs() {
     case $CHOICE in
       1)
         if ! la_scan; then err "Не удалось выполнить сканирование."; pause; continue; fi
-        header "Log Analyzer — сводка"
+        header "Сводка журналов"
         printf '  Период: %s · приоритет: %s\n' "$LA_PERIOD" "$LA_PRIORITY"
         printf '  Событий: %s · групп: %s · SSH: %s успешных / %s неудачных\n\n' "$(wc -l <"$LA_RAW")" "$(wc -l <"$LA_GROUP_FILE")" "$LA_SSH_OK" "$LA_SSH_FAIL"
         printf '%s' "$LA_STATUS"
@@ -7389,7 +7389,7 @@ menu_logs() {
           (( page > 1 )) && menu_item p "Предыдущая страница"
           (( page < pages )) && menu_item n "Следующая страница"
           (( $(wc -l <"$LA_GROUP_FILE") > 0 )) && menu_item o "Открыть группу по номеру"
-          menu_item 0 "Назад к Log Analyzer"
+          menu_item 0 "Назад к анализу журналов"
           echo; read_choice
           case $CHOICE in
             p|P) (( page > 1 )) && page=$((page - 1)) ;;
