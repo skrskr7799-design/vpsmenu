@@ -187,7 +187,7 @@ mod_nb_install() {
   header "NetBird: установка"
   if nb_installed; then
     ok "NetBird уже установлен: $(nb_version)"
-    echo "  service: $(systemctl is-active netbird 2>/dev/null) / $(systemctl is-enabled netbird 2>/dev/null)"
+    echo "  Служба: $(systemctl is-active netbird 2>/dev/null) / автозапуск: $(systemctl is-enabled netbird 2>/dev/null)"
     hint "Подключить к сети: пункт «Подключить к сети (setup-ключ)»."
     pause; return 0
   fi
