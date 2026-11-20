@@ -245,11 +245,11 @@ la_export() {
     echo "VPSMENU — АНАЛИЗ ЖУРНАЛОВ"
     echo "Создано: $(date -Is)"
     echo "Период: $LA_PERIOD; уровень: $LA_PRIORITY"
-    echo "Events: $(wc -l <"$LA_RAW"); groups: $(wc -l <"$LA_GROUP_FILE")"
+    echo "Событий: $(wc -l <"$LA_RAW"); групп: $(wc -l <"$LA_GROUP_FILE")"
     echo; echo "[СТАТУС ИСТОЧНИКОВ]"; printf '%s' "$LA_STATUS"
-    echo; echo "[SSH]"; printf 'Successful logins: %s\nFailed logins: %s\n' "$LA_SSH_OK" "$LA_SSH_FAIL"
+    echo; echo "[SSH]"; printf 'Успешные входы: %s\nНеудачные входы: %s\n' "$LA_SSH_OK" "$LA_SSH_FAIL"
     echo; echo "[СГРУППИРОВАННЫЕ СОБЫТИЯ]"
-    printf 'Count\tSource\tUnit\tFirst\tLast\tSeverity\tNormalized\tExample 1\tExample 2\tExample 3\n'
+    printf 'Повторы\tИсточник\tОбъект\tПервое\tПоследнее\tТип\tШаблон\tПример 1\tПример 2\tПример 3\n'
     while IFS=$'\t' read -r count source unit first last severity normalized e1 e2 e3 epoch; do
       printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$count" "$source" "$unit" "$first" "$last" "$severity" "$normalized" "$e1" "$e2" "$e3"
     done <"$LA_GROUP_FILE"
@@ -294,7 +294,7 @@ menu_logs() {
           (( page > 1 )) && menu_item p "Предыдущая страница"
           (( page < pages )) && menu_item n "Следующая страница"
           (( $(wc -l <"$LA_GROUP_FILE") > 0 )) && menu_item o "Открыть группу по номеру"
-          menu_item 0 "Назад к Log Analyzer"
+          menu_item 0 "Назад к анализу журналов"
           echo; read_choice
           case $CHOICE in
             p|P) (( page > 1 )) && page=$((page - 1)) ;;
