@@ -4700,7 +4700,7 @@ dash_security() { # dash_security [force]
 
 dash_render() { # dash_render [force] — выводит весь экран один раз
   local force=${1:-0}
-  header "Dashboard"
+  header "Панель состояния"
   dash_system
   dash_network
   dash_services
@@ -5958,7 +5958,7 @@ audit_session() { # audit_session quick|full — отчёт с действия�
     audit_show
     menu_item 1 "Исправить найденное / принять риск"
     menu_item r "Перепроверить"
-    menu_item m "Режим: $([[ $mode == full ]] && echo "переключить на Quick" || echo "переключить на Full")"
+    menu_item m "Режим: $([[ $mode == full ]] && echo "переключить на быструю" || echo "переключить на полную")"
     menu_item s "Сохранить отчёт в файл"
     menu_item h "Как считается оценка"
     menu_item 0 "Назад"
