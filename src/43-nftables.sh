@@ -89,8 +89,8 @@ mod_nft_check() {
 menu_nft() {
   while true; do
     header "4. nftables"
-    menu_item 1 "Установить / включить / запустить"
-    menu_item 2 "Показать список правил"
+    menu_item 1 "Установка / включение / запуск"
+    menu_item 2 "Список правил nftables"
     menu_item 3 "Проверить синтаксис /etc/nftables.conf"
     menu_item 0 "Назад"
     echo; read_choice
