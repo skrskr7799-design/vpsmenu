@@ -2049,7 +2049,7 @@ mod_f2b_reconfigure() {
 mod_f2b_status() {
   header "Fail2ban: статус sshd"
   if ! cmd_exists fail2ban-client; then err "fail2ban не установлен."; pause; return 1; fi
-  echo "  service: $(systemctl is-active fail2ban 2>/dev/null) / $(systemctl is-enabled fail2ban 2>/dev/null)"
+  echo "  Служба: $(systemctl is-active fail2ban 2>/dev/null) / автозапуск: $(systemctl is-enabled fail2ban 2>/dev/null)"
   echo
   if ! fail2ban-client status sshd; then warn "jail sshd недоступен — настрой его (пункт 1)."; fi
   pause
@@ -5116,14 +5116,14 @@ mod_svc_daemon_reload() {
 
 menu_services() {
   if ! cmd_exists systemctl || [[ ! -d /run/systemd/system ]]; then
-    header "Service Manager"
+    header "Управление службами"
     err "systemd недоступен на этой системе."
     pause
     return 1
   fi
   local nrun nfail
   while true; do
-    header "Service Manager"
+    header "Управление службами"
     nrun="$(systemctl list-units --type=service --state=running --no-legend --plain --no-pager 2>/dev/null | wc -l)"
     nfail="$(systemctl --failed --no-legend --plain --no-pager 2>/dev/null | wc -l)"
     ui_line ok "Работает служб: $nrun"
@@ -6187,7 +6187,7 @@ mod_nb_install() {
   header "NetBird: установка"
   if nb_installed; then
     ok "NetBird уже установлен: $(nb_version)"
-    echo "  service: $(systemctl is-active netbird 2>/dev/null) / $(systemctl is-enabled netbird 2>/dev/null)"
+    echo "  Служба: $(systemctl is-active netbird 2>/dev/null) / автозапуск: $(systemctl is-enabled netbird 2>/dev/null)"
     hint "Подключить к сети: пункт «Подключить к сети (setup-ключ)»."
     pause; return 0
   fi
