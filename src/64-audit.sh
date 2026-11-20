@@ -588,8 +588,8 @@ audit_summary() {
 }
 
 audit_show() { # экран с отчётом
-  local title="Quick Scan"
-  if [[ $AUD_MODE == full ]]; then title="Full Scan"; fi
+  local title="Быстрая проверка"
+  if [[ $AUD_MODE == full ]]; then title="Полная проверка"; fi
   header "$title"
   { audit_report; audit_summary; } | show_paged
 }
@@ -600,7 +600,7 @@ audit_save_report() { # сохраняет отчёт в текстовый фа
   f="$BACKUP_DIR/audit-${AUD_MODE}-$(date +%Y%m%d-%H%M%S).txt"
   (
     C_RESET=''; C_BOLD=''; C_DIM=''; C_RED=''; C_GREEN=''; C_YELLOW=''; C_CYAN=''
-    printf 'Security Audit (%s) · %s · %s\n' "$AUD_MODE" "$UI_HOST" "$(date '+%F %T')"
+    printf 'Аудит безопасности (%s) · %s · %s\n' "$AUD_MODE" "$UI_HOST" "$(date '+%F %T')"
     audit_report
     audit_summary
   ) >"$f"
@@ -789,7 +789,7 @@ audit_session() { # audit_session quick|full — отчёт с действия�
   local mode=$1 rescan=1
   while true; do
     if (( rescan )); then
-      header "$([[ $mode == full ]] && echo "Full Scan" || echo "Quick Scan")"
+      header "$([[ $mode == full ]] && echo "Полная проверка" || echo "Быстрая проверка")"
       audit_scan "$mode"
     fi
     rescan=0
@@ -816,11 +816,11 @@ audit_session() { # audit_session quick|full — отчёт с действия�
 menu_audit() {
   local last
   while true; do
-    header "Security Audit"
+    header "Аудит безопасности"
     last="$(audit_last_line)"
     if [[ -n $last ]]; then ui_kv "Последний" "$(badge "${last%%|*}" "${last#*|}")" 10; echo; fi
-    menu_item 1 "Quick Scan — основные проверки за пару секунд"
-    menu_item 2 "Full Scan — SSH, файрвол, пользователи, права, Docker, обновления, сеть"
+    menu_item 1 "Быстрая проверка — основные проверки за пару секунд"
+    menu_item 2 "Полная проверка — SSH, файрвол, пользователи, права, Docker, обновления, сеть"
     menu_item 3 "Исключения (ожидаемые порты, принятые риски)"
     menu_item 4 "Как считается оценка"
     menu_item 0 "Назад"
