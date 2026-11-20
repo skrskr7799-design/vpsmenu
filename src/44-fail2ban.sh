@@ -66,7 +66,7 @@ mod_f2b_reconfigure() {
 mod_f2b_status() {
   header "Fail2ban: статус sshd"
   if ! cmd_exists fail2ban-client; then err "fail2ban не установлен."; pause; return 1; fi
-  echo "  service: $(systemctl is-active fail2ban 2>/dev/null) / $(systemctl is-enabled fail2ban 2>/dev/null)"
+  echo "  Служба: $(systemctl is-active fail2ban 2>/dev/null) / автозапуск: $(systemctl is-enabled fail2ban 2>/dev/null)"
   echo
   if ! fail2ban-client status sshd; then warn "jail sshd недоступен — настрой его (пункт 1)."; fi
   pause
