@@ -1373,7 +1373,7 @@ menu_ssh() {
     menu_item 5 "Добавить новый порт SSH (старый пока остаётся)"
     menu_item 6 "Закрыть старый порт SSH"
     menu_item 7 "Показать текущие параметры SSH"
-    menu_item 8 "Откатить запрет root (из резервной копии)"
+    menu_item 8 "Восстановить sshd_config (из резервной копии)"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
@@ -1826,8 +1826,8 @@ mod_ufw_logging() {
 menu_ufw() {
   while true; do
     header "3. UFW"
-    menu_item 1 "Установить / первичная настройка (или показать статус)"
-    menu_item 2 "Статус подробно"
+    menu_item 1 "Установка / настройка / статус"
+    menu_item 2 "Подробный статус"
     menu_item 3 "Открыть порт"
     menu_item 4 "Удалить правило"
     menu_item 5 "Уровень логирования"
@@ -1966,8 +1966,8 @@ mod_nft_check() {
 menu_nft() {
   while true; do
     header "4. nftables"
-    menu_item 1 "Установить / включить / запустить"
-    menu_item 2 "Показать список правил"
+    menu_item 1 "Установка / включение / запуск"
+    menu_item 2 "Список правил nftables"
     menu_item 3 "Проверить синтаксис /etc/nftables.conf"
     menu_item 0 "Назад"
     echo; read_choice
