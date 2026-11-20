@@ -11,12 +11,12 @@ main_menu() {
       printf '  %s▲ Доступна новая версия скрипта: %s → %s (пункт 12 → 1)%s\n' "$C_YELLOW" "$APP_VERSION" "$UPDATE_AVAILABLE" "$C_RESET"
       hr
     fi
-    menu_item d "Dashboard — состояние сервера"
-    menu_item s "Service Manager — службы systemd"
-    menu_item a "Security Audit — проверка безопасности"
+    menu_item d "Панель состояния сервера"
+    menu_item s "Управление службами systemd"
+    menu_item a "Аудит безопасности"
     menu_item n "NetBird — приватная сеть (VPN)"
-    menu_item m "Storage Analyzer — куда ушло место"
-    menu_item l "Log Analyzer — журналы и ошибки"
+    menu_item m "Анализ диска и хранилища"
+    menu_item l "Журналы и ошибки"
     echo
     menu_item 1 "Пользователи"
     menu_item 2 "SSH: root, ключи, порт"
