@@ -68,7 +68,7 @@ dash_system() {
     if [[ $pct =~ ^[0-9]+$ ]] && (( pct >= 85 )); then diskhot=1; fi
     shown=$(( shown + 1 ))
   done < <(df -P -k -x tmpfs -x devtmpfs -x squashfs -x overlay -x efivarfs 2>/dev/null | tail -n +2)
-  if (( diskhot )); then ui_line warn "Диск заполнен на 85% или больше: открой Storage Analyzer клавишей m"; fi
+  if (( diskhot )); then ui_line warn "Диск заполнен на 85% или больше: открой анализ хранилища клавишей m"; fi
 }
 
 dash_network() {
@@ -120,7 +120,7 @@ dash_services() {
       if (( n > 5 )); then break; fi
       printf '      %s%s%s\n' "$C_RED" "$u" "$C_RESET"
     done <<<"$failed"
-    printf '      %sразобраться: клавиша s в главном меню (Service Manager)%s\n' "$C_DIM" "$C_RESET"
+    printf '      %sразобраться: клавиша s в главном меню (управление службами)%s\n' "$C_DIM" "$C_RESET"
   fi
 }
 
