@@ -130,7 +130,7 @@ watchdog_disable() {
 }
 
 mod_wd_status() {
-  header "Watchdog Remnanode"
+  header "Контроль Remnanode"
   if wd_enabled; then ok "Контроль: включён (проверка каждые $(wd_interval) мин)"; else info "Контроль: выключен"; fi
   if wd_autorestart_on; then
     ok "Автоперезапуск: включён (до $(wd_max_attempts) попыток подряд)"
@@ -211,7 +211,7 @@ mod_wd_log() {
 
 menu_watchdog() {
   while true; do
-    header "Remnanode: watchdog"
+    header "Remnanode: контроль"
     if wd_enabled; then info "Контроль включён · автоперезапуск: $(wd_autorestart_on && echo включён || echo выключен)"; else info "Контроль выключен"; fi
     echo
     menu_item 1 "Статус и события"
