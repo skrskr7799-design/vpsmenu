@@ -2837,7 +2837,7 @@ watchdog_disable() {
 }
 
 mod_wd_status() {
-  header "Watchdog Remnanode"
+  header "Контроль Remnanode"
   if wd_enabled; then ok "Контроль: включён (проверка каждые $(wd_interval) мин)"; else info "Контроль: выключен"; fi
   if wd_autorestart_on; then
     ok "Автоперезапуск: включён (до $(wd_max_attempts) попыток подряд)"
@@ -2918,7 +2918,7 @@ mod_wd_log() {
 
 menu_watchdog() {
   while true; do
-    header "Remnanode: watchdog"
+    header "Remnanode: контроль"
     if wd_enabled; then info "Контроль включён · автоперезапуск: $(wd_autorestart_on && echo включён || echo выключен)"; else info "Контроль выключен"; fi
     echo
     menu_item 1 "Статус и события"
@@ -7032,7 +7032,7 @@ mod_st_snap_crash() {
 }
 
 mod_st_report() {
-  header "Отчёт Storage Analyzer"
+  header "Отчёт анализатора хранилища"
   if st_report_generate; then
     ok "Отчёт сохранён: $ST_REPORT_PATH"
     hint "Права доступа: 600. В отчёте — файловые системы, inode, крупные каталоги и Docker."
@@ -7063,7 +7063,7 @@ mod_st_bigfiles() {
 menu_storage() {
   local av
   while true; do
-    header "Storage Analyzer"
+    header "Анализ хранилища"
     av="$(df -P / 2>/dev/null | awk 'NR == 2 {gsub("%", "", $5); print $5}')"
     if [[ $av =~ ^[0-9]+$ ]]; then ui_meter "Диск /" "$av" "свободно $(ui_human_kb "$(st_avail_kb)")"; echo; fi
     menu_item 1 "Куда ушло место (обзор)"
