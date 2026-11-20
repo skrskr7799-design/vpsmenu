@@ -375,14 +375,14 @@ mod_svc_daemon_reload() {
 
 menu_services() {
   if ! cmd_exists systemctl || [[ ! -d /run/systemd/system ]]; then
-    header "Service Manager"
+    header "Управление службами"
     err "systemd недоступен на этой системе."
     pause
     return 1
   fi
   local nrun nfail
   while true; do
-    header "Service Manager"
+    header "Управление службами"
     nrun="$(systemctl list-units --type=service --state=running --no-legend --plain --no-pager 2>/dev/null | wc -l)"
     nfail="$(systemctl --failed --no-legend --plain --no-pager 2>/dev/null | wc -l)"
     ui_line ok "Работает служб: $nrun"
