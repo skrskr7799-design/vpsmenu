@@ -238,7 +238,7 @@ dash_security() { # dash_security [force]
 
 dash_render() { # dash_render [force] — выводит весь экран один раз
   local force=${1:-0}
-  header "Dashboard"
+  header "Панель состояния"
   dash_system
   dash_network
   dash_services
