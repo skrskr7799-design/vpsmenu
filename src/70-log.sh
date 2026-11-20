@@ -1,4 +1,4 @@
-# ══════════════════════════ Log Analyzer ══════════════════════════
+# ══════════════════════════ Анализ журналов ══════════════════════════
 # Диагностика журналов. Модуль только читает логи и не меняет состояние сервера.
 
 LA_REPORT_DIR=/var/backups/vpsmenu
@@ -242,9 +242,9 @@ la_export() {
   stamp="$(date +%Y%m%d-%H%M%S)"
   path="$(mktemp "$LA_REPORT_DIR/log-analyzer-$stamp-XXXXXX.txt")" || return 1
   {
-    echo "VPSMENU LOG ANALYZER"
-    echo "Generated: $(date -Is)"
-    echo "Period: $LA_PERIOD; priority: $LA_PRIORITY"
+    echo "VPSMENU — АНАЛИЗ ЖУРНАЛОВ"
+    echo "Создано: $(date -Is)"
+    echo "Период: $LA_PERIOD; уровень: $LA_PRIORITY"
     echo "Events: $(wc -l <"$LA_RAW"); groups: $(wc -l <"$LA_GROUP_FILE")"
     echo; echo "[СТАТУС ИСТОЧНИКОВ]"; printf '%s' "$LA_STATUS"
     echo; echo "[SSH]"; printf 'Successful logins: %s\nFailed logins: %s\n' "$LA_SSH_OK" "$LA_SSH_FAIL"
@@ -261,7 +261,7 @@ la_export() {
 menu_logs() {
   local page pages index line count source unit first last severity normalized e1 e2 e3 epoch report start end idx from until
   while true; do
-    header "Log Analyzer"
+    header "Анализ журналов"
     printf '  Период: %s · уровень: %s\n\n' "$LA_PERIOD" "$([[ $LA_PRIORITY == 3 ]] && echo ошибки || echo ошибки + предупреждения)"
     menu_item 1 "Сканировать журналы"
     menu_item 2 "Период: 1h / 6h / 24h / 3d / 7d"
@@ -272,7 +272,7 @@ menu_logs() {
     case $CHOICE in
       1)
         if ! la_scan; then err "Не удалось выполнить сканирование."; pause; continue; fi
-        header "Log Analyzer — сводка"
+        header "Сводка журналов"
         printf '  Период: %s · приоритет: %s\n' "$LA_PERIOD" "$LA_PRIORITY"
         printf '  Событий: %s · групп: %s · SSH: %s успешных / %s неудачных\n\n' "$(wc -l <"$LA_RAW")" "$(wc -l <"$LA_GROUP_FILE")" "$LA_SSH_OK" "$LA_SSH_FAIL"
         printf '%s' "$LA_STATUS"
