@@ -109,8 +109,8 @@ mod_ufw_logging() {
 menu_ufw() {
   while true; do
     header "3. UFW"
-    menu_item 1 "Установить / первичная настройка (или показать статус)"
-    menu_item 2 "Статус подробно"
+    menu_item 1 "Установка / настройка / статус"
+    menu_item 2 "Подробный статус"
     menu_item 3 "Открыть порт"
     menu_item 4 "Удалить правило"
     menu_item 5 "Уровень логирования"
