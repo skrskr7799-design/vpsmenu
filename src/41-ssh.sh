@@ -154,7 +154,7 @@ menu_ssh() {
     menu_item 5 "Добавить новый порт SSH (старый пока остаётся)"
     menu_item 6 "Закрыть старый порт SSH"
     menu_item 7 "Показать текущие параметры SSH"
-    menu_item 8 "Откатить запрет root (из резервной копии)"
+    menu_item 8 "Восстановить sshd_config (из резервной копии)"
     menu_item 0 "Назад"
     echo; read_choice
     case $CHOICE in
