@@ -1122,7 +1122,7 @@ user_delete_account() {
   warn "Будет удалена учётная запись '$name' (UID $uid)."
   hint "Файлы вне домашнего каталога автоматически удаляться не будут."
   if confirm "Также удалить домашний каталог $home?" N; then remove_home=1; fi
-  if ! confirm_word "Для подтверждения удаления" "delete"; then info "Удаление отменено."; return 1; fi
+  if ! confirm_word "Для подтверждения удаления" "удалить"; then info "Удаление отменено."; return 1; fi
   if (( remove_home )); then
     if command -v deluser >/dev/null 2>&1; then
       if deluser --remove-home "$name"; then ok "Пользователь '$name' удалён."; else err "Не удалось удалить '$name'."; return 1; fi
@@ -7548,7 +7548,7 @@ main_menu() {
     menu_item 9 "Оптимизация и обслуживание"
     menu_item 10 "Мастер быстрой настройки"
     menu_item 11 "Обзор системы"
-    menu_item 12 "Сам скрипт (обновление, установка)"
+    menu_item 12 "Управление скриптом (установка, обновление)"
     menu_item 13 "Профили серверов"
     menu_item 14 "Диагностика сети (speedtest, ping)"
     menu_item 0 "Выход"
