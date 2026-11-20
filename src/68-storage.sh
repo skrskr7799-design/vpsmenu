@@ -630,7 +630,7 @@ mod_st_snap_crash() {
 }
 
 mod_st_report() {
-  header "Отчёт Storage Analyzer"
+  header "Отчёт анализатора хранилища"
   if st_report_generate; then
     ok "Отчёт сохранён: $ST_REPORT_PATH"
     hint "Права доступа: 600. В отчёте — файловые системы, inode, крупные каталоги и Docker."
@@ -661,7 +661,7 @@ mod_st_bigfiles() {
 menu_storage() {
   local av
   while true; do
-    header "Storage Analyzer"
+    header "Анализ хранилища"
     av="$(df -P / 2>/dev/null | awk 'NR == 2 {gsub("%", "", $5); print $5}')"
     if [[ $av =~ ^[0-9]+$ ]]; then ui_meter "Диск /" "$av" "свободно $(ui_human_kb "$(st_avail_kb)")"; echo; fi
     menu_item 1 "Куда ушло место (обзор)"
