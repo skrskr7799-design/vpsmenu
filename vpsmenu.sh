@@ -131,7 +131,7 @@ declare -a UI_MENU_ITEMS=()
 declare -A MENU_TITLES=(
   [menu_ssh]="SSH" [menu_ufw]="UFW" [menu_nft]="nftables" [menu_f2b]="Fail2ban" [menu_docker]="Docker"
   [menu_remna]="Remnanode" [menu_watchdog]="Watchdog" [menu_maint]="Обслуживание" [menu_self]="Скрипт"
-  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Service Manager" [menu_logs]="Log Analyzer" [menu_audit]="Security Audit" [menu_netbird]="NetBird"
+  [menu_profiles]="Профили" [menu_net]="Сеть" [menu_services]="Управление службами" [menu_logs]="Журналы" [menu_audit]="Аудит безопасности" [menu_netbird]="NetBird"
 )
 
 log()  { printf '%s [%s] %s\n' "$(date '+%F %T')" "$1" "$2" >>"$LOG_FILE" 2>/dev/null || true; }
@@ -7530,12 +7530,12 @@ main_menu() {
       printf '  %s▲ Доступна новая версия скрипта: %s → %s (пункт 12 → 1)%s\n' "$C_YELLOW" "$APP_VERSION" "$UPDATE_AVAILABLE" "$C_RESET"
       hr
     fi
-    menu_item d "Dashboard — состояние сервера"
-    menu_item s "Service Manager — службы systemd"
-    menu_item a "Security Audit — проверка безопасности"
+    menu_item d "Панель состояния сервера"
+    menu_item s "Управление службами systemd"
+    menu_item a "Аудит безопасности"
     menu_item n "NetBird — приватная сеть (VPN)"
-    menu_item m "Storage Analyzer — куда ушло место"
-    menu_item l "Log Analyzer — журналы и ошибки"
+    menu_item m "Анализ диска и хранилища"
+    menu_item l "Журналы и ошибки"
     echo
     menu_item 1 "Пользователи"
     menu_item 2 "SSH: root, ключи, порт"
